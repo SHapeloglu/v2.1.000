@@ -1,0 +1,530 @@
+{% extends "pages/settings/base.html" %}
+{% set active_tab = 'subscription' %}
+{% block title %}Abonelik Ayarları{% endblock %}
+{% block subtitle %}Unsubscribe sunucu ayarları, suppression listesi ve liste temizleme{% endblock %}
+
+{% block settings_content %}
+<!-- İstatistikler -->
+<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:12px;margin-bottom:20px">
+    <div class="card" style="padding:16px;text-align:center">
+        <div style="font-size:26px;font-weight:700;color:var(--accent)" id="stat-total">—</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:3px">Toplam Engelli</div>
+    </div>
+    <div class="card" style="padding:16px;text-align:center">
+        <div style="font-size:26px;font-weight:700;color:#f87171" id="stat-unsubscribe">—</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:3px">Abonelik İptali</div>
+    </div>
+    <div class="card" style="padding:16px;text-align:center">
+        <div style="font-size:26px;font-weight:700;color:#fb923c" id="stat-bounce">—</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:3px">Bounce</div>
+    </div>
+    <div class="card" style="padding:16px;text-align:center">
+        <div style="font-size:26px;font-weight:700;color:#facc15" id="stat-complaint">—</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:3px">Şikayet</div>
+    </div>
+</div>
+
+<!-- Hosting DB Ayarları -->
+<div class="card">
+    <div class="card-title">🌐 Unsubscribe Sunucu Ayarları (Linux Hosting)</div>
+    <p style="font-size:13px;color:var(--muted);margin-bottom:16px">
+        EC2 kapalıyken abonelik iptali linklerinin çalışması için unsubscribe uygulamasını
+        ayrı bir hosting'de çalıştırın. Aşağıya o hosting'deki MySQL bilgilerini girin.
+    </p>
+    <div class="fg">
+        <div class="g2">
+            <div class="field"><label>Unsubscribe Uygulama URL</label><input id="unsub-app-url" placeholder="https://unsub.siteniz.com"></div>
+            <div class="field"><label>Hosting DB Host</label><input id="unsub-db-host" placeholder="localhost"></div>
+        </div>
+        <div class="g3">
+            <div class="field"><label>DB Port</label><input id="unsub-db-port" placeholder="3306" value="3306"></div>
+            <div class="field"><label>DB Adı</label><input id="unsub-db-name" placeholder="unsub_db"></div>
+            <div class="field"><label>DB Kullanıcı</label><input id="unsub-db-user" placeholder="unsub_user"></div>
+        </div>
+        <div class="field" style="max-width:340px">
+            <label>DB Şifre</label>
+            <div class="pw-wrap"><input type="password" id="unsub-db-pass" placeholder="••••••••"><button class="pw-eye" onclick="togglePw('unsub-db-pass',this)">👁</button></div>
+        </div>
+    </div>
+    <div class="btn-row" style="margin-top:14px">
+        <button class="btn btn-primary" onclick="saveUnsubConfig()"><div class="sp" id="unsub-sp"></div><span id="unsub-save-txt">💾 Kaydet & Test Et</span></button>
+    </div>
+    <div class="alert" id="unsub-db-alert"></div>
+</div>
+
+<!-- Liste Temizleme -->
+<div class="card">
+    <div class="card-title">🗑 Mail Listelerinden Abonelik İptallerini Temizle</div>
+    <p style="font-size:13px;color:var(--muted);margin-bottom:16px">Aboneliğini iptal eden kişileri seçtiğiniz tablodan kalıcı olarak siler.</p>
+    <div class="fg">
+        <div class="g2">
+            <div class="field">
+                <label>Tablo Seç <span style="color:var(--err)">*</span></label>
+                <select id="purge-table"><option value="">— Tablo seç —</option></select>
+            </div>
+            <div class="field">
+                <label>E-posta Sütunu <span style="color:var(--err)">*</span></label>
+                <select id="purge-col"><option value="">— Önce tablo seçin —</option></select>
+            </div>
+        </div>
+        <div class="alert" id="purge-alert"></div>
+        <div class="btn-row" style="gap:10px">
+            <button class="btn btn-danger" onclick="purgeTablePage()">
+                <div class="sp" id="purge-sp"></div><span id="purge-btn-txt">🗑 Seçili Tablodan Sil</span>
+            </button>
+            <button class="btn btn-danger" onclick="purgeAllTablesPage()" style="background:rgba(239,68,68,.15);border-color:rgba(239,68,68,.4)">
+                <div class="sp" id="purge-all-sp"></div><span id="purge-all-btn-txt">🗑 Tüm Listelerden Sil</span>
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- Manuel Suppression Ekle -->
+<div class="card">
+    <div class="card-title">➕ Suppression Listesine Manuel Ekle</div>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:14px">
+        Tek adres veya virgülle/satır satır birden fazla adres ekleyebilirsiniz.
+    </div>
+    <div class="fg">
+        <div class="field">
+            <label>E-posta Adresleri</label>
+            <textarea id="supp-add-emails" rows="3"
+                placeholder="ornek@mail.com&#10;baska@mail.com, ucuncu@mail.com"
+                style="width:100%;background:var(--s2);border:1px solid var(--border);
+                       border-radius:8px;padding:10px 14px;color:var(--text);
+                       font-size:13px;font-family:inherit;resize:vertical;
+                       box-sizing:border-box"></textarea>
+        </div>
+        <div class="field" style="max-width:220px">
+            <label>Sebep</label>
+            <select id="supp-add-reason">
+                <option value="manual">✋ Manuel</option>
+                <option value="unsubscribe">↩ Abonelik İptali</option>
+                <option value="bounce">↩ Bounce</option>
+                <option value="complaint">⚠ Şikayet</option>
+                <option value="invalid">✗ Geçersiz</option>
+            </select>
+        </div>
+    </div>
+    <div class="btn-row">
+        <button class="btn btn-primary" onclick="addSuppressionManual()">
+            <div class="sp" id="supp-add-sp"></div>
+            <span id="supp-add-txt">➕ Listeye Ekle</span>
+        </button>
+    </div>
+    <div class="alert" id="supp-add-alert"></div>
+</div>
+
+<!-- Domain Bloklama -->
+<div class="card">
+    <div class="card-title">🚫 Domain Bloklama Listesi</div>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:14px">
+        Bir domain eklendiğinde o domain'e ait <strong>tüm e-posta adreslerine</strong> gönderim otomatik engellenir.
+        Örn: <code>rakip.com</code> eklenirse <code>*@rakip.com</code> adreslerine hiç mail gönderilmez.
+    </div>
+    <div class="fg">
+        <div class="field">
+            <label>Domain(ler) <span style="color:var(--err)">*</span></label>
+            <textarea id="dom-add-input" rows="3"
+                placeholder="domain1.com&#10;domain2.com, domain3.com.tr"
+                style="width:100%;background:var(--s2);border:1px solid var(--border);
+                       border-radius:8px;padding:10px 14px;color:var(--text);
+                       font-size:13px;font-family:inherit;resize:vertical;box-sizing:border-box"></textarea>
+            <div style="font-size:11px;color:var(--muted);margin-top:4px">Satır satır veya virgülle ayırarak birden fazla domain girebilirsiniz.</div>
+        </div>
+        <div class="g2">
+            <div class="field">
+                <label>Sebep</label>
+                <select id="dom-add-reason">
+                    <option value="manual">Manuel</option>
+                    <option value="competitor">Rakip domain</option>
+                    <option value="spam">Spam kaynağı</option>
+                    <option value="invalid">Geçersiz domain</option>
+                    <option value="internal">İç kullanım</option>
+                </select>
+            </div>
+            <div class="field">
+                <label>Not (isteğe bağlı)</label>
+                <input id="dom-add-note" placeholder="Bu domain neden engellendi?">
+            </div>
+        </div>
+        <div class="btn-row">
+            <button class="btn btn-primary" onclick="addDomainBlock()">
+                <div class="sp" id="dom-add-sp"></div>
+                <span id="dom-add-txt">🚫 Domain(leri) Engelle</span>
+            </button>
+        </div>
+        <div class="alert" id="dom-add-alert"></div>
+    </div>
+
+    <!-- Domain listesi -->
+    <div style="margin-top:18px">
+        <div style="display:flex;gap:10px;margin-bottom:12px;flex-wrap:wrap;align-items:center">
+            <input id="dom-search" placeholder="Domain ara..." style="flex:1;min-width:180px" oninput="loadDomainList()">
+            <span id="dom-count" style="font-size:12px;color:var(--muted);white-space:nowrap"></span>
+        </div>
+        <div id="dom-list-wrap">
+            <div style="text-align:center;color:var(--muted);padding:20px;font-size:13px">Yükleniyor...</div>
+        </div>
+    </div>
+</div>
+
+<!-- Suppression Listesi -->
+<div class="card">
+    <div class="card-title">
+        🚫 Suppression Listesi
+        <span id="supp-count" style="font-size:12px;font-weight:400;color:var(--muted);margin-left:8px"></span>
+    </div>
+    <div style="display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap">
+        <input id="supp-search" placeholder="E-posta ara..." style="flex:1;min-width:180px" oninput="loadSuppressionPage(1)">
+        <select id="supp-reason" onchange="loadSuppressionPage(1)" style="width:160px">
+            <option value="">Tüm sebepler</option>
+            <option value="unsubscribe">Abonelik iptali</option>
+            <option value="bounce">Bounce</option>
+            <option value="complaint">Şikayet</option>
+            <option value="invalid">Geçersiz</option>
+        </select>
+        <button class="btn btn-outline btn-sm" onclick="loadSuppressionPage(1)">🔄 Yenile</button>
+    </div>
+    <div style="overflow-x:auto">
+        <table style="width:100%;border-collapse:collapse;font-size:13px">
+            <thead>
+                <tr style="border-bottom:1px solid var(--border)">
+                    <th style="text-align:left;padding:8px 10px;color:var(--muted);font-weight:500">E-posta</th>
+                    <th style="text-align:left;padding:8px 10px;color:var(--muted);font-weight:500">Sebep</th>
+                    <th style="text-align:left;padding:8px 10px;color:var(--muted);font-weight:500">Kaynak</th>
+                    <th style="text-align:left;padding:8px 10px;color:var(--muted);font-weight:500">Tarih</th>
+                    <th style="padding:8px 10px"></th>
+                </tr>
+            </thead>
+            <tbody id="supp-tbody">
+                <tr><td colspan="5" style="text-align:center;color:var(--muted);padding:20px">Yükleniyor...</td></tr>
+            </tbody>
+        </table>
+    </div>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-top:14px;font-size:12px;color:var(--muted)">
+        <span id="supp-pg-info"></span>
+        <div style="display:flex;gap:8px">
+            <button class="btn btn-outline btn-sm" id="supp-pg-prev" onclick="loadSuppressionPage(_suppPage-1)" disabled>← Önceki</button>
+            <button class="btn btn-outline btn-sm" id="supp-pg-next" onclick="loadSuppressionPage(_suppPage+1)" disabled>Sonraki →</button>
+        </div>
+    </div>
+</div>
+
+<script>
+let _suppPage = 1;
+const REASON_LABELS = {
+    unsubscribe: '<span class="chip chip-skip">↩ İptal</span>',
+    bounce:      '<span class="chip chip-err">↩ Bounce</span>',
+    complaint:   '<span class="chip" style="background:rgba(251,146,60,.1);color:#fb923c;border-color:rgba(251,146,60,.2)">⚠ Şikayet</span>',
+    invalid:     '<span class="chip chip-off">✗ Geçersiz</span>',
+};
+
+document.addEventListener('DOMContentLoaded', () => {
+    loadStatsPage();
+    loadSuppressionPage(1);
+    loadPurgeTablesPage();
+    loadUnsubConfigPage();
+    loadDomainList();
+    document.getElementById('purge-table').addEventListener('change', onPurgeTableChangePage);
+});
+
+async function addSuppressionManual() {
+    const raw    = document.getElementById('supp-add-emails').value.trim();
+    const reason = document.getElementById('supp-add-reason').value;
+    const sp     = document.getElementById('supp-add-sp');
+    const txt    = document.getElementById('supp-add-txt');
+    const al     = document.getElementById('supp-add-alert');
+
+    al.className = 'alert';
+    if (!raw) {
+        al.textContent = 'En az bir e-posta adresi girin.';
+        al.className   = 'alert err show';
+        return;
+    }
+
+    // Satır sonu ve virgülleri normalize et
+    const emails = raw.split(/[,\n;]+/).map(e => e.trim()).filter(Boolean);
+
+    sp.style.display = 'block'; txt.textContent = 'Ekleniyor...';
+    try {
+        const d = await (await fetch('/api/suppression', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({emails, reason})
+        })).json();
+        al.textContent = d.message;
+        al.className   = d.success ? 'alert ok show' : 'alert err show';
+        if (d.success) {
+            document.getElementById('supp-add-emails').value = '';
+            loadSuppressionPage(1);
+            loadStatsPage();
+            setTimeout(() => al.className = 'alert', 4000);
+        }
+    } catch(e) {
+        al.textContent = 'Bağlantı hatası.';
+        al.className   = 'alert err show';
+    } finally {
+        sp.style.display = 'none'; txt.textContent = '➕ Listeye Ekle';
+    }
+}
+
+async function loadStatsPage() {
+    try {
+        const d = await (await fetch('/api/suppression/stats')).json();
+        if (!d.success) return;
+        document.getElementById('stat-total').textContent      = d.stats.total       || 0;
+        document.getElementById('stat-unsubscribe').textContent= d.stats.unsubscribe || 0;
+        document.getElementById('stat-bounce').textContent     = d.stats.bounce      || 0;
+        document.getElementById('stat-complaint').textContent  = d.stats.complaint   || 0;
+    } catch(e) {}
+}
+
+async function loadUnsubConfigPage() {
+    try {
+        const d = await (await fetch('/api/unsub-db-config')).json();
+        document.getElementById('unsub-app-url').value  = d.UNSUB_APP_URL  || '';
+        document.getElementById('unsub-db-host').value  = d.UNSUB_DB_HOST  || '';
+        document.getElementById('unsub-db-port').value  = d.UNSUB_DB_PORT  || '3306';
+        document.getElementById('unsub-db-name').value  = d.UNSUB_DB_NAME  || '';
+        document.getElementById('unsub-db-user').value  = d.UNSUB_DB_USER  || '';
+    } catch(e) {}
+}
+
+async function saveUnsubConfig() {
+    const btn=document.getElementById('unsub-save-txt'), sp=document.getElementById('unsub-sp');
+    btn.textContent='Kaydediliyor...'; sp.style.display='block';
+    hideAlert('unsub-db-alert');
+    try {
+        const d = await (await fetch('/api/unsub-db-config', {
+            method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({
+                UNSUB_APP_URL:     document.getElementById('unsub-app-url').value,
+                UNSUB_DB_HOST:     document.getElementById('unsub-db-host').value,
+                UNSUB_DB_PORT:     document.getElementById('unsub-db-port').value,
+                UNSUB_DB_NAME:     document.getElementById('unsub-db-name').value,
+                UNSUB_DB_USER:     document.getElementById('unsub-db-user').value,
+                UNSUB_DB_PASSWORD: document.getElementById('unsub-db-pass').value,
+            })
+        })).json();
+        showAlert('unsub-db-alert', (d.success?'✅ ':'❌ ')+d.message, d.success?'ok':'err');
+    } catch(e) { showAlert('unsub-db-alert','Bağlantı hatası.','err'); }
+    finally { btn.textContent='💾 Kaydet & Test Et'; sp.style.display='none'; }
+}
+
+async function loadSuppressionPage(page) {
+    _suppPage = page;
+    const search = document.getElementById('supp-search').value;
+    const reason = document.getElementById('supp-reason').value;
+    let url = `/api/suppression?page=${page}&per_page=50`;
+    if (search) url+=`&search=${encodeURIComponent(search)}`;
+    if (reason) url+=`&reason=${reason}`;
+    try {
+        const d = await (await fetch(url)).json();
+        const tb = document.getElementById('supp-tbody');
+        if (!d.data||!d.data.length) {
+            tb.innerHTML='<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:20px">Kayıt bulunamadı.</td></tr>';
+            document.getElementById('supp-count').textContent='';
+            document.getElementById('supp-pg-info').textContent='';
+            document.getElementById('supp-pg-prev').disabled=true;
+            document.getElementById('supp-pg-next').disabled=true;
+            return;
+        }
+        tb.innerHTML=d.data.map(r=>`<tr style="border-bottom:1px solid var(--border)">
+            <td style="padding:9px 10px;font-size:12px;font-family:'Space Mono',monospace">${esc(r.email)}</td>
+            <td style="padding:9px 10px">${REASON_LABELS[r.reason]||esc(r.reason)}</td>
+            <td style="padding:9px 10px;font-size:11px;color:var(--muted)">${esc(r.source||'—')}</td>
+            <td style="padding:9px 10px;font-size:11px;color:var(--muted);white-space:nowrap">${esc(r.created_at||'')}</td>
+            <td style="padding:9px 10px;text-align:right"><button class="btn btn-outline btn-sm" onclick="removeSuppressionPage('${esc(r.email)}')">✕ Kaldır</button></td>
+        </tr>`).join('');
+        const pages=Math.ceil(d.total/50);
+        document.getElementById('supp-count').textContent=`${d.total} kayıt`;
+        document.getElementById('supp-pg-info').textContent=`Sayfa ${page} / ${pages||1}`;
+        document.getElementById('supp-pg-prev').disabled=(page<=1);
+        document.getElementById('supp-pg-next').disabled=(page>=pages);
+    } catch(e) { console.error(e); }
+}
+
+async function removeSuppressionPage(email) {
+    if (!confirm(`"${email}" adresini listeden kaldırmak istediğinize emin misiniz?`)) return;
+    const d = await (await fetch('/api/suppression',{method:'DELETE',headers:{'Content-Type':'application/json'},body:JSON.stringify({email})})).json();
+    if (d.success) { loadSuppressionPage(_suppPage); loadStatsPage(); }
+    else alert('Hata: '+d.message);
+}
+
+async function loadPurgeTablesPage() {
+    try {
+        const d = await (await fetch('/api/list-tables')).json();
+        const sel = document.getElementById('purge-table');
+        if (!d.success||!d.tables.length) { sel.innerHTML='<option value="">— Tablo bulunamadı —</option>'; return; }
+        sel.innerHTML='<option value="">— Tablo seç —</option>'+d.tables.map(t=>`<option value="${esc(t.name)}" data-cols='${JSON.stringify(t.columns)}'>${esc(t.name)} (${t.row_count} kayıt)</option>`).join('');
+    } catch(e) {}
+}
+
+function onPurgeTableChangePage() {
+    const sel=document.getElementById('purge-table');
+    const opt=sel.options[sel.selectedIndex];
+    const colSel=document.getElementById('purge-col');
+    if (!sel.value) { colSel.innerHTML='<option value="">— Önce tablo seçin —</option>'; return; }
+    try {
+        const cols=JSON.parse(opt.dataset.cols||'[]');
+        colSel.innerHTML=cols.map(c=>`<option value="${esc(c)}">${esc(c)}</option>`).join('');
+        const auto=cols.find(c=>/mail|e.?mail|eposta/i.test(c));
+        if (auto) colSel.value=auto;
+    } catch(e) { colSel.innerHTML='<option value="">Sütunlar yüklenemedi</option>'; }
+}
+
+async function purgeTablePage() {
+    const table=document.getElementById('purge-table').value;
+    const col=document.getElementById('purge-col').value;
+    if (!table||!col) { showAlert('purge-alert','Tablo ve e-posta sütunu seçmelisiniz.','err'); return; }
+    if (!confirm(`"${table}" tablosundaki suppression listesindeki tüm e-postalar silinecek. Devam?`)) return;
+    const btn=document.getElementById('purge-btn-txt'), sp=document.getElementById('purge-sp');
+    btn.textContent='Siliniyor...'; sp.style.display='block'; hideAlert('purge-alert');
+    try {
+        const d=await (await fetch('/api/suppression/purge-table',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({table_name:table,email_col:col})})).json();
+        showAlert('purge-alert',(d.success?'✅ ':'❌ ')+d.message,d.success?'ok':'err');
+        if (d.success) loadPurgeTablesPage();
+    } catch(e) { showAlert('purge-alert','Bağlantı hatası.','err'); }
+    finally { btn.textContent='🗑 Seçili Tablodan Sil'; sp.style.display='none'; }
+}
+
+async function purgeAllTablesPage() {
+    if (!confirm('Tüm mail listesi tablolarından suppression listesindeki adresler silinecek. Devam?')) return;
+    const btn=document.getElementById('purge-all-btn-txt'), sp=document.getElementById('purge-all-sp');
+    btn.textContent='Siliniyor...'; sp.style.display='block'; hideAlert('purge-alert');
+    try {
+        const d=await (await fetch('/api/suppression/purge-all',{method:'POST'})).json();
+        showAlert('purge-alert',(d.success?'✅ ':'❌ ')+d.message,d.success?'ok':'err');
+        if (d.success) loadPurgeTablesPage();
+    } catch(e) { showAlert('purge-alert','Bağlantı hatası.','err'); }
+    finally { btn.textContent='🗑 Tüm Listelerden Sil'; sp.style.display='none'; }
+}
+
+/* ══════════════════════════════════════════════════════
+   DOMAIN BLOKLAMA FONKSİYONLARI
+   ══════════════════════════════════════════════════════ */
+
+async function loadDomainList() {
+    const search  = (document.getElementById('dom-search').value || '').trim();
+    const wrap    = document.getElementById('dom-list-wrap');
+    const countEl = document.getElementById('dom-count');
+    if (!wrap) return;
+    try {
+        const url = '/api/suppression/domains' + (search ? '?search=' + encodeURIComponent(search) : '');
+        const d   = await (await fetch(url)).json();
+        const rows = d.data || [];
+        if (countEl) countEl.textContent = rows.length + ' domain';
+
+        if (!rows.length) {
+            wrap.innerHTML = '<div style="text-align:center;color:var(--muted);padding:24px;font-size:13px">' +
+                (search ? 'Arama sonucu bulunamadı.' : 'Henüz bloklu domain yok.') + '</div>';
+            return;
+        }
+
+        const reasonLabel = {
+            manual: 'Manuel', competitor: 'Rakip domain',
+            spam: 'Spam kaynağı', invalid: 'Geçersiz', internal: 'İç kullanım'
+        };
+
+        wrap.innerHTML =
+            `<table style="width:100%;border-collapse:collapse;font-size:13px">
+              <thead>
+                <tr style="border-bottom:2px solid var(--border)">
+                  <th style="text-align:left;padding:8px 12px;font-size:11px;color:var(--muted);font-weight:600">DOMAIN</th>
+                  <th style="text-align:left;padding:8px 12px;font-size:11px;color:var(--muted);font-weight:600">SEBEP</th>
+                  <th style="text-align:left;padding:8px 12px;font-size:11px;color:var(--muted);font-weight:600">NOT</th>
+                  <th style="text-align:left;padding:8px 12px;font-size:11px;color:var(--muted);font-weight:600">EKLENME</th>
+                  <th style="padding:8px 12px"></th>
+                </tr>
+              </thead>
+              <tbody>` +
+            rows.map(r => `
+                <tr style="border-bottom:1px solid var(--border)">
+                  <td style="padding:10px 12px;font-weight:600;font-family:monospace">
+                    @${esc(r.domain)}
+                  </td>
+                  <td style="padding:10px 12px">
+                    <span class="chip chip-err" style="font-size:10px;padding:2px 8px">
+                      ${esc(reasonLabel[r.reason] || r.reason)}
+                    </span>
+                  </td>
+                  <td style="padding:10px 12px;color:var(--muted);font-size:12px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+                    ${esc(r.note || '—')}
+                  </td>
+                  <td style="padding:10px 12px;color:var(--muted);font-size:12px;white-space:nowrap">
+                    ${esc(r.created_at || '')}
+                  </td>
+                  <td style="padding:10px 12px;text-align:right">
+                    <button class="btn btn-danger btn-sm"
+                            onclick="deleteDomainBlock('${esc(r.domain)}')"
+                            title="${esc(r.domain)} engelini kaldır">🗑</button>
+                  </td>
+                </tr>`).join('') +
+            `</tbody></table>`;
+    } catch(e) {
+        if (wrap) wrap.innerHTML = '<div style="color:var(--err);padding:12px;font-size:13px">Yüklenemedi: ' + e + '</div>';
+    }
+}
+
+async function addDomainBlock() {
+    const raw    = (document.getElementById('dom-add-input').value || '').trim();
+    const reason = document.getElementById('dom-add-reason').value;
+    const note   = (document.getElementById('dom-add-note').value || '').trim();
+    const sp     = document.getElementById('dom-add-sp');
+    const txt    = document.getElementById('dom-add-txt');
+
+    if (!raw) { showAlert('dom-add-alert', 'En az bir domain girin.', 'err'); return; }
+
+    sp.style.display = 'block';
+    txt.textContent  = 'Ekleniyor...';
+    hideAlert('dom-add-alert');
+
+    try {
+        const d = await (await fetch('/api/suppression/domains', {
+            method:  'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body:    JSON.stringify({ domains: raw, reason, note })
+        })).json();
+
+        showAlert('dom-add-alert',
+            (d.success ? '✅ ' : '❌ ') + d.message,
+            d.success ? 'ok' : 'err');
+
+        if (d.success) {
+            document.getElementById('dom-add-input').value = '';
+            document.getElementById('dom-add-note').value  = '';
+            loadDomainList();
+            loadStatsPage();   // istatistik sayaçlarını da yenile
+        }
+    } catch(e) {
+        showAlert('dom-add-alert', 'Bağlantı hatası: ' + e, 'err');
+    } finally {
+        sp.style.display = 'none';
+        txt.textContent  = '🚫 Domain(leri) Engelle';
+    }
+}
+
+async function deleteDomainBlock(domain) {
+    if (!confirm('"@' + domain + '" engelini kaldırmak istediğinize emin misiniz?\n' +
+                 'Bu domain\'e ait adreslere tekrar mail gönderilebilir.')) return;
+    try {
+        const d = await (await fetch('/api/suppression/domains', {
+            method:  'DELETE',
+            headers: { 'Content-Type': 'application/json' },
+            body:    JSON.stringify({ domain })
+        })).json();
+        if (d.success) {
+            loadDomainList();
+            loadStatsPage();
+        } else {
+            alert('Hata: ' + d.message);
+        }
+    } catch(e) {
+        alert('Bağlantı hatası: ' + e);
+    }
+}
+</script>
+
+{% endblock %}
+

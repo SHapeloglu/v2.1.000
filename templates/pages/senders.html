@@ -1,0 +1,238 @@
+{% extends "base.html" %}
+{% block title %}Göndericiler{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>📤 Göndericiler</h1>
+    <p>SMTP ve AWS SES hesaplarınızı yönetin. Şifreler Fernet ile şifreli saklanır.</p>
+</div>
+
+<!-- Gönderici Kartları -->
+<div id="sender-cards" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:16px;margin-bottom:24px">
+    <div style="color:var(--muted);padding:20px;text-align:center;grid-column:1/-1">Yükleniyor...</div>
+</div>
+
+<!-- Form -->
+<div class="card">
+    <div class="card-title" id="sender-form-title">➕ Yeni Gönderici Ekle</div>
+    <div class="fg">
+        <div class="g2">
+            <div class="field"><label>Görünen Ad <span style="color:var(--err)">*</span></label><input id="s-name" placeholder="powerbi.com.tr"></div>
+            <div class="field"><label>Gönderici E-posta <span style="color:var(--err)">*</span></label><input id="s-email" placeholder="info@powerbi.com.tr"></div>
+        </div>
+        <div class="field">
+            <label>Gönderim Modu</label>
+            <div style="display:flex;gap:8px;margin-top:4px">
+                <button class="btn btn-sm btn-primary" id="mode-smtp-btn" onclick="setSenderMode('smtp')">📡 SMTP</button>
+                <button class="btn btn-sm btn-outline" id="mode-ses-btn" onclick="setSenderMode('ses')">☁ AWS SES</button>
+            </div>
+            <input type="hidden" id="s-mode" value="smtp">
+        </div>
+        <!-- SMTP -->
+        <div id="smtp-fields" class="fg">
+            <div class="g3">
+                <div class="field"><label>SMTP Sunucu</label><input id="s-smtp" placeholder="mail.firma.com"></div>
+                <div class="field"><label>Port</label>
+                    <input id="s-port" placeholder="465" value="465">
+                    <div class="pills">
+                        <button class="pill active" onclick="setSPort(465,this)">465 SSL</button>
+                        <button class="pill" onclick="setSPort(587,this)">587 TLS</button>
+                        <button class="pill" onclick="setSPort(25,this)">25</button>
+                    </div>
+                </div>
+                <div class="field"><label>Kullanıcı Adı</label><input id="s-user" placeholder="info@firma.com"></div>
+            </div>
+            <div class="g2">
+                <div class="field">
+                    <label>Şifre <span style="color:var(--muted);font-size:10px">(düzenlemede boş = değiştirme)</span></label>
+                    <div class="pw-wrap"><input type="password" id="s-pass" placeholder="••••••••"><button class="pw-eye" onclick="togglePw('s-pass',this)">👁</button></div>
+                </div>
+                <div class="field"><label>Bağlantı</label>
+                    <div class="toggle-row"><span class="tgl-label">SSL kullan</span><label class="tgl"><input type="checkbox" id="s-ssl" checked><span class="tgl-sl"></span></label></div>
+                </div>
+            </div>
+        </div>
+        <!-- AWS SES -->
+        <div id="ses-fields" class="fg" style="display:none">
+            <div style="font-size:12px;color:var(--muted);padding:10px 13px;background:rgba(52,211,153,.05);border:1px solid rgba(52,211,153,.15);border-radius:var(--r)">
+                ☁ Credentials <strong style="color:var(--ok)">Fernet şifreli</strong> DB'de saklanır. AWS Console → IAM → Security credentials → Create access key
+            </div>
+            <div class="g3">
+                <div class="field">
+                    <label>AWS Access Key ID</label>
+                    <div class="pw-wrap"><input type="password" id="s-aws-key" placeholder="AKIA… (boş = değiştirme)"><button class="pw-eye" onclick="togglePw('s-aws-key',this)">👁</button></div>
+                </div>
+                <div class="field">
+                    <label>AWS Secret Access Key</label>
+                    <div class="pw-wrap"><input type="password" id="s-aws-secret" placeholder="•••••••• (boş = değiştirme)"><button class="pw-eye" onclick="togglePw('s-aws-secret',this)">👁</button></div>
+                </div>
+                <div class="field">
+                    <label>AWS Region</label>
+                    <select id="s-aws-region">
+                        <option value="us-east-1">us-east-1 (N. Virginia)</option>
+                        <option value="us-east-2">us-east-2 (Ohio)</option>
+                        <option value="us-west-2">us-west-2 (Oregon)</option>
+                        <option value="eu-west-1">eu-west-1 (Ireland)</option>
+                        <option value="eu-west-2">eu-west-2 (London)</option>
+                        <option value="eu-central-1">eu-central-1 (Frankfurt)</option>
+                        <option value="eu-north-1">eu-north-1 (Stockholm)</option>
+                        <option value="ap-southeast-1">ap-southeast-1 (Singapore)</option>
+                        <option value="ap-northeast-1">ap-northeast-1 (Tokyo)</option>
+                        <option value="ap-south-1">ap-south-1 (Mumbai)</option>
+                        <option value="sa-east-1">sa-east-1 (São Paulo)</option>
+                        <option value="ca-central-1">ca-central-1 (Canada)</option>
+                    </select>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="btn-row" style="margin-top:14px">
+        <button class="btn btn-primary" onclick="saveSender()"><div class="sp" id="s-sp"></div><span id="s-btn-txt">💾 Kaydet</span></button>
+        <button class="btn btn-outline" onclick="cancelSenderEdit()" id="s-cancel-btn" style="display:none">İptal</button>
+    </div>
+    <div class="alert" id="s-alert"></div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    loadSenders();
+    loadSenderSelects();
+    setSenderMode('smtp');
+});
+
+async function loadSenders() {
+    try {
+        const [sr, statsR] = await Promise.all([
+            fetch('/api/senders').then(r => r.json()),
+            fetch('/api/senders/stats').then(r => r.json()),
+        ]);
+        const container = document.getElementById('sender-cards');
+        if (!sr.data || !sr.data.length) {
+            container.innerHTML = '<div style="color:var(--muted);padding:20px;text-align:center;grid-column:1/-1">Henüz gönderici eklenmedi.</div>';
+            return;
+        }
+        const stats = statsR.stats || {};
+        container.innerHTML = sr.data.map(s => renderSenderCard(s, stats[s.id] || {})).join('');
+    } catch(e) { console.error(e); }
+}
+
+function renderSenderCard(s, st) {
+    const isSes     = s.sender_mode === 'ses';
+    const sentMonth = st.sent_month  || 0;
+    const totalMonth= st.total_month || 0;
+    const failMonth = totalMonth - sentMonth;
+    const sentAll   = st.sent_all   || 0;
+    const lastSent  = st.last_sent_at || '—';
+
+    const SES_FREE  = 62000;
+    const pct       = isSes ? Math.min(100, Math.round(sentMonth / SES_FREE * 100)) : 0;
+    const barColor  = pct >= 100 ? '#f87171' : pct >= 80 ? '#fb923c' : '#4ade80';
+
+    const modeChip  = isSes ? '<span class="chip chip-ok">☁ SES</span>' : '<span class="chip chip-on">📡 SMTP</span>';
+    const statChip  = s.is_active ? '<span class="chip chip-on">Aktif</span>' : '<span class="chip chip-off">Pasif</span>';
+    const serverTxt = isSes ? (s.aws_region||'us-east-1') : `${esc(s.smtp_server||'')}:${s.smtp_port||''}`;
+
+    const warnBanner = pct >= 100
+        ? `<div style="background:rgba(248,113,113,.1);border:1px solid rgba(248,113,113,.3);border-radius:8px;padding:8px 12px;font-size:12px;color:#f87171;margin-top:10px">🚨 Bu ay limiti aştı! (${sentMonth.toLocaleString()} / ${SES_FREE.toLocaleString()})</div>`
+        : pct >= 80
+        ? `<div style="background:rgba(251,146,60,.1);border:1px solid rgba(251,146,60,.3);border-radius:8px;padding:8px 12px;font-size:12px;color:#fb923c;margin-top:10px">⚠️ Aylık limitin %${pct}'i kullanıldı (${sentMonth.toLocaleString()} / ${SES_FREE.toLocaleString()})</div>`
+        : '';
+
+    return `
+    <div class="card" style="padding:20px" id="sender-card-${s.id}">
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:12px">
+            <div>
+                <div style="font-weight:600;font-size:15px;margin-bottom:3px">${esc(s.name)}</div>
+                <div style="font-size:11px;color:var(--muted);font-family:'Space Mono',monospace">${esc(s.email)}</div>
+            </div>
+            <div style="display:flex;gap:5px">${modeChip}${statChip}</div>
+        </div>
+        <div style="font-size:10px;color:var(--muted);font-family:'Space Mono',monospace;margin-bottom:12px">${serverTxt}</div>
+
+        <!-- İstatistikler -->
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:12px">
+            <div style="background:var(--s2);border-radius:8px;padding:8px;text-align:center">
+                <div style="font-size:17px;font-weight:700;color:var(--accent)">${sentMonth.toLocaleString()}</div>
+                <div style="font-size:10px;color:var(--muted);margin-top:2px">Bu ay</div>
+            </div>
+            <div style="background:var(--s2);border-radius:8px;padding:8px;text-align:center">
+                <div style="font-size:17px;font-weight:700;color:${failMonth>0?'#f87171':'var(--muted)'}">${failMonth.toLocaleString()}</div>
+                <div style="font-size:10px;color:var(--muted);margin-top:2px">Hatalı</div>
+            </div>
+            <div style="background:var(--s2);border-radius:8px;padding:8px;text-align:center">
+                <div style="font-size:17px;font-weight:700;color:var(--text)">${sentAll.toLocaleString()}</div>
+                <div style="font-size:10px;color:var(--muted);margin-top:2px">Toplam</div>
+            </div>
+        </div>
+
+        ${isSes ? `
+        <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--muted);margin-bottom:3px">
+            <span>EC2 ücretsiz limit (62.000/ay)</span>
+            <span style="color:${barColor};font-weight:600">%${pct}</span>
+        </div>
+        <div style="background:var(--s2);border-radius:99px;height:6px;overflow:hidden;margin-bottom:2px">
+            <div style="height:100%;width:${pct}%;background:${barColor};border-radius:99px;transition:width .5s"></div>
+        </div>` : ''}
+
+        ${warnBanner}
+
+        ${isSes ? `<div id="quota-${s.id}" style="margin-top:10px">
+            <button class="btn btn-outline btn-sm" onclick="fetchSesQuota(${s.id})" style="font-size:11px;width:100%">☁ AWS'den canlı kota sorgula</button>
+        </div>` : ''}
+
+        <div style="font-size:11px;color:var(--muted);margin-top:10px">Son gönderim: <strong>${lastSent}</strong></div>
+
+        <div style="display:flex;gap:6px;margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">
+            <button class="btn btn-outline btn-sm" onclick="testSender(${s.id})">🔌 Test</button>
+            <button class="btn btn-outline btn-sm" onclick="editSenderFn(${s.id})">✏ Düzenle</button>
+            <button class="btn btn-danger btn-sm" onclick="delSender(${s.id})" style="margin-left:auto">🗑 Sil</button>
+        </div>
+    </div>`;
+}
+
+async function fetchSesQuota(senderId) {
+    const box = document.getElementById(`quota-${senderId}`);
+    box.innerHTML = '<div style="font-size:12px;color:var(--muted);text-align:center;padding:8px">⏳ AWS sorgulanıyor...</div>';
+    try {
+        const d = await (await fetch(`/api/ses-quota/${senderId}`)).json();
+        if (!d.success) {
+            box.innerHTML = `<div style="font-size:12px;color:#f87171;padding:8px;background:rgba(248,113,113,.08);border-radius:8px;border:1px solid rgba(248,113,113,.2)">❌ ${esc(d.message)}</div><button class="btn btn-outline btn-sm" onclick="fetchSesQuota(${senderId})" style="font-size:11px;width:100%;margin-top:6px">🔄 Tekrar dene</button>`;
+            return;
+        }
+        const used   = d.sent_24h;
+        const max24h = d.max_24h;
+        const pct24h = max24h > 0 ? Math.min(100, Math.round(used / max24h * 100)) : 0;
+        const bc     = pct24h >= 90 ? '#f87171' : pct24h >= 70 ? '#fb923c' : '#4ade80';
+
+        box.innerHTML = `
+            <div style="background:var(--s2);border-radius:10px;padding:12px;margin-top:8px;font-size:12px">
+                <div style="font-weight:600;margin-bottom:10px">☁ Canlı AWS Kota</div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
+                    <div style="text-align:center">
+                        <div style="font-size:16px;font-weight:700;color:var(--accent)">${used.toLocaleString()}</div>
+                        <div style="color:var(--muted);font-size:10px">Son 24s gönderilen</div>
+                    </div>
+                    <div style="text-align:center">
+                        <div style="font-size:16px;font-weight:700">${max24h.toLocaleString()}</div>
+                        <div style="color:var(--muted);font-size:10px">24s limiti</div>
+                    </div>
+                </div>
+                <div style="display:flex;justify-content:space-between;margin-bottom:3px">
+                    <span style="color:var(--muted)">24s kullanım</span>
+                    <span style="color:${bc};font-weight:600">%${pct24h}</span>
+                </div>
+                <div style="background:var(--bg);border-radius:99px;height:5px;overflow:hidden;margin-bottom:8px">
+                    <div style="height:100%;width:${pct24h}%;background:${bc};border-radius:99px"></div>
+                </div>
+                <div style="color:var(--muted);font-size:11px">Max hız: <strong style="color:var(--text)">${d.max_per_sec} mail/s</strong></div>
+                ${pct24h>=80?`<div style="margin-top:8px;color:#fb923c;font-size:11px">⚠️ 24 saatlik limitin %${pct24h}'ine ulaşıldı.</div>`:''}
+            </div>
+            <button class="btn btn-outline btn-sm" onclick="fetchSesQuota(${senderId})" style="font-size:11px;width:100%;margin-top:6px">🔄 Yenile</button>`;
+    } catch(e) {
+        box.innerHTML = `<div style="font-size:12px;color:#f87171;padding:8px">Bağlantı hatası.</div>`;
+    }
+}
+</script>
+{% endblock %}

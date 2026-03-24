@@ -1,0 +1,907 @@
+{% extends "base.html" %}
+
+{% block title %}Toplu Gönderim{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>📋 Toplu Gönderim</h1>
+    <p>Excel listesinden toplu mail. <code style="background:var(--s2);padding:2px 6px;border-radius:5px;font-size:11px">{{KolonAdi}}</code> ile kişiselleştirin. <span id="ses-mode-badge" class="badge" style="display:none;background:rgba(52,211,153,.1);border-color:rgba(52,211,153,.3);color:#34d399">☁ AWS SES</span></p>
+</div>
+
+<!-- Mod göstergesi -->
+<div id="hosting-mode-bar" style="display:none;margin-bottom:14px;padding:10px 16px;background:rgba(99,102,241,.08);border:1px solid rgba(99,102,241,.25);border-radius:var(--r);display:flex;align-items:center;gap:10px">
+    <span style="font-size:15px">🌐</span>
+    <div style="flex:1">
+        <strong style="font-size:13px;color:#818cf8">Hosting Modu</strong>
+        <span style="font-size:12px;color:var(--muted);margin-left:8px">Görev kuyruğa eklenir, cPanel cron worker çalıştırır.</span>
+    </div>
+    <a href="/bulk-send#queue-panel" style="font-size:12px;color:#818cf8;text-decoration:none">📋 Kuyruğu Gör ↓</a>
+</div>
+
+<!-- Görev adı (hosting modu) -->
+<div id="queue-name-field" style="display:none" class="card">
+    <div class="field" style="margin:0">
+        <label>📌 Görev Adı <span style="color:var(--muted);font-size:11px">(kuyruktaki isim)</span></label>
+        <input id="b-queue-name" placeholder="örn: Mart Kampanyası — Liste A">
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-title">① Gönderici & Kural Seçimi</div>
+    <div class="fg">
+        <div class="g2">
+            <div class="field"><label>Gönderici <span style="color:var(--err)">*</span></label><select id="b-sender"><option value="">— Seç —</option></select></div>
+            <div class="field"><label>Gönderim Kuralı <span class="badge">opsiyonel</span></label><select id="b-rule" onchange="onRuleChange()"><option value="">— Kural yok (sınırsız) —</option></select></div>
+        </div>
+        <div id="rule-info" class="ib" style="display:none">⏱ Seçilen kural: aynı alıcıya en erken <strong id="ri-val"></strong> sonra tekrar gönderilebilir.</div>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-title">② Mail Listesi Kaynağı</div>
+    <!-- Kaynak seçici -->
+    <div style="display:flex;gap:6px;margin-bottom:18px">
+        <button class="btn btn-sm" id="src-tab-db" onclick="switchListSource('db')"
+            style="background:linear-gradient(135deg,var(--accent),#8b5cf6);color:#fff">🗄 Veritabanı Tablosu</button>
+        <button class="btn btn-sm btn-outline" id="src-tab-excel" onclick="switchListSource('excel')">📊 Excel Dosyası</button>
+        <button class="btn btn-sm btn-outline" id="src-tab-paste" onclick="switchListSource('paste')">📋 Metin Yapıştır</button>
+    </div>
+
+    <!-- DB TABLO PANELİ -->
+    <div id="src-db-panel" class="fg">
+        <div style="display:flex;align-items:flex-end;gap:10px">
+            <div class="field" style="flex:1">
+                <label>Tablo Seç <span style="color:var(--err)">*</span></label>
+                <select id="b-db-table" onchange="onDbTableSelect()">
+                    <option value="">— Tablo seç —</option>
+                </select>
+            </div>
+            <button class="btn btn-outline btn-sm" onclick="loadDbTables()" style="flex-shrink:0;margin-bottom:1px" title="Tabloları yenile">⟳ Yenile</button>
+        </div>
+        <div id="b-db-loading" style="display:none;font-size:12px;color:var(--muted)">⏳ Tablo okunuyor...</div>
+        <div id="b-db-meta" style="display:none" class="fg">
+            <div class="g2">
+                <div class="field">
+                    <label>E-posta Sütunu <span style="color:var(--err)">*</span></label>
+                    <select id="b-db-email-col" onchange="updateVarTagsFromDb()"></select>
+                </div>
+                <div class="field">
+                    <label>Kişiselleştirme Değişkenleri</label>
+                    <select id="b-db-var-cols" multiple style="min-height:80px" onchange="updateVarTagsFromDb()"></select>
+                    <div style="font-size:11px;color:var(--muted);margin-top:4px">Ctrl/Cmd çoklu seç. <code>{{kolon}}</code> olarak konu/mesajda kullanılır.</div>
+                </div>
+            </div>
+            <div style="font-size:11px;color:var(--muted)">📌 <strong id="b-db-total" style="color:var(--text)">0</strong> kayıt. Önizleme (ilk 5):</div>
+            <div class="xprev" id="b-db-prev-tbl"></div>
+            <div id="b-db-var-tags-area">
+                <div style="font-size:11px;color:var(--muted);margin-bottom:5px">Tıklayarak konu/mesaja değişken ekleyin:</div>
+                <div class="var-tags" id="b-db-var-tags"></div>
+            </div>
+
+            <!-- is_valid filtresi — verify yapılmış tablolarda görünür -->
+            <div id="b-valid-filter-row" style="display:none">
+                <div class="toggle-row" style="background:var(--s2);border-radius:8px;padding:10px 14px;border:1px solid var(--border)">
+                    <span class="tgl-label">
+                        ✅ <strong>Sadece doğrulanmış adreslere gönder</strong>
+                        <span class="badge" style="background:rgba(34,197,94,.15);color:#15803d;margin-left:4px">is_valid = 1</span>
+                        <span style="font-size:11px;color:var(--muted);display:block;margin-top:2px" id="b-valid-filter-hint"></span>
+                    </span>
+                    <label class="tgl"><input type="checkbox" id="b-only-valid" checked><span class="tgl-sl"></span></label>
+                </div>
+            </div>
+        </div>
+        <div class="alert" id="db-table-alert"></div>
+    </div>
+
+    <!-- YAPIŞTIR PANELİ -->
+    <div id="src-paste-panel" style="display:none" class="fg">
+        <div class="field">
+            <label>E-posta Listesi <span style="color:var(--err)">*</span></label>
+            <textarea id="b-paste-emails" rows="10"
+                placeholder="Her satıra bir e-posta adresi yapıştırın:&#10;&#10;ahmet@firma.com&#10;ayse@sirket.com.tr&#10;mehmet@ornek.net&#10;&#10;Not: Virgül, noktalı virgül veya başka ayraç kullanmayın.&#10;Her satır = bir alıcı."
+                style="width:100%;background:var(--s2);border:1px solid var(--border);
+                       border-radius:8px;padding:10px 14px;color:var(--text);
+                       font-size:13px;font-family:monospace;resize:vertical;
+                       box-sizing:border-box;min-height:200px"
+                oninput="updatePasteCount()"></textarea>
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px">
+                <span style="font-size:11px;color:var(--muted)">
+                    📌 Her satır bir e-posta. Boş satırlar ve tekrar edenler otomatik temizlenir.
+                </span>
+                <span id="b-paste-count" style="font-size:12px;color:var(--accent);font-weight:500"></span>
+            </div>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <button type="button" class="btn btn-outline btn-sm" onclick="clearPasteList()">🗑 Temizle</button>
+            <button type="button" class="btn btn-outline btn-sm" onclick="deduplicatePasteList()">✨ Tekrarları Kaldır</button>
+        </div>
+    </div>
+
+    <!-- EXCEL PANELİ -->
+    <div id="src-excel-panel" style="display:none" class="fg">
+        <div class="field">
+            <div class="fup" onclick="document.getElementById('b-excel').click()">
+                <input type="file" id="b-excel" accept=".xlsx,.xls" onchange="previewExcel(this)">
+                <div class="fup-icon">📊</div>
+                <div class="fup-txt"><strong>.xlsx veya .xls dosyası seçin</strong><br><span>E-posta listesi içeren Excel dosyası</span></div>
+                <div id="b-excel-fn" class="fup-name"></div>
+            </div>
+            <div id="b-excel-loading" style="display:none;font-size:12px;color:var(--muted);margin-top:8px">⏳ Dosya okunuyor...</div>
+        </div>
+
+        <div id="b-excel-meta" style="display:none" class="fg">
+            <div class="g2">
+                <div class="field">
+                    <label>E-posta Sütunu <span style="color:var(--err)">*</span></label>
+                    <select id="b-email-col" onchange="updateVarTags()"></select>
+                </div>
+                <div class="field">
+                    <label>Kişiselleştirme Değişkenleri <span class="badge">tümünü seç</span></label>
+                    <select id="b-var-cols" multiple style="min-height:80px" onchange="updateVarTags()"></select>
+                    <div style="font-size:11px;color:var(--muted);margin-top:4px">Ctrl/Cmd ile çoklu seçin. Seçilenler <code>{{kolon}}</code> olarak kullanılabilir.</div>
+                </div>
+            </div>
+            <div style="font-size:11px;color:var(--muted)">📌 <strong id="b-total" style="color:var(--text)">0</strong> satır okundu. Önizleme (ilk 5 satır):</div>
+            <div class="xprev" id="b-prev-tbl"></div>
+            <div id="b-var-tags-area">
+                <div style="font-size:11px;color:var(--muted);margin-bottom:5px">Aşağıya tıklayarak konu veya mesaj alanına değişken ekleyin:</div>
+                <div class="var-tags" id="b-var-tags"></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-title">③ Mesaj İçeriği</div>
+    <div class="fg">
+        <div class="field">
+            <!-- Konu alanı — şablon seçici butonu ile -->
+            <label style="display:flex;align-items:center;justify-content:space-between">
+                <span>Konu <span style="color:var(--err)">*</span></span>
+                <button type="button" class="btn btn-outline btn-sm"
+                        onclick="openTplPicker('subject')"
+                        title="Kayıtlı konulardan seç">
+                    📌 Konu Şablonu Seç
+                </button>
+            </label>
+            <input id="b-subject" placeholder="Merhaba {{Ad}}, size özel bir teklifimiz var!" onfocus="activeTarget='b-subject'">
+        </div>
+        <div class="toggle-row">
+            <span class="tgl-label">HTML modu — alıcılar HTML olarak görür</span>
+            <label class="tgl"><input type="checkbox" id="b-html" checked><span class="tgl-sl"></span></label>
+        </div>
+        <div class="toggle-row">
+            <span class="tgl-label">📧 Her mailin altına <strong>listeden çıkma linki</strong> ekle <span class="badge">önerilen</span></span>
+            <label class="tgl"><input type="checkbox" id="b-unsub" checked><span class="tgl-sl"></span></label>
+        </div>
+        <div class="toggle-row">
+            <span class="tgl-label">
+                🔍 <strong>MX kaydı kontrolü</strong> — göndermeden önce domain'in mail sunucusu var mı denetler
+                <span class="badge" style="background:rgba(34,197,94,.15);color:#15803d">bounce önleyici</span>
+                <span style="font-size:11px;color:var(--muted);display:block;margin-top:2px">
+                    Geçersiz domain'leri gönderim öncesi atlar → bounce oranını %60-70 düşürür. İlk gönderimde biraz yavaşlatır ama domain önbelleklenir.
+                </span>
+            </span>
+            <label class="tgl"><input type="checkbox" id="b-mx-check" checked><span class="tgl-sl"></span></label>
+        </div>
+        <div class="field">
+            <!-- Mesaj alanı — şablon seçici butonu ile -->
+            <label style="display:flex;align-items:center;justify-content:space-between">
+                <span>Mesaj <span style="color:var(--err)">*</span>
+                    <span class="badge" style="margin-left:6px">{{KolonAdi}} ile kişiselleştir</span>
+                </span>
+                <button type="button" class="btn btn-outline btn-sm"
+                        onclick="openTplPicker('body')"
+                        title="Kayıtlı mesajlardan seç">
+                    📄 Mesaj Şablonu Seç
+                </button>
+            </label>
+            <textarea id="b-body" placeholder="Sayın {{Ad}},&#10;&#10;Mesajınız burada..." style="min-height:160px" onfocus="activeTarget='b-body'"></textarea>
+        </div>
+
+        <!-- Mevcut değerleri şablon olarak kaydet butonları -->
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <button type="button" class="btn btn-outline btn-sm" onclick="saveCurrentAsTemplate('subject')">
+                💾 Konuyu Şablon Olarak Kaydet
+            </button>
+            <button type="button" class="btn btn-outline btn-sm" onclick="saveCurrentAsTemplate('body')">
+                💾 Mesajı Şablon Olarak Kaydet
+            </button>
+        </div>
+        <div class="field">
+            <label>Gönderimler Arası Bekleme <span style="color:var(--muted);font-size:10px">(spam önleme)</span></label>
+            <div style="display:flex;align-items:center;gap:12px">
+                <input type="range" id="b-delay" min="100" max="5000" step="100" value="500" style="flex:1;accent-color:var(--accent);padding:0;height:auto" oninput="document.getElementById('b-delay-val').textContent=this.value+'ms'">
+                <span style="font-family:'Space Mono',monospace;font-size:12px;color:var(--accent);min-width:60px;text-align:right" id="b-delay-val">500ms</span>
+            </div>
+        </div>
+        <!-- Parçalı Gönderim -->
+        <div class="toggle-row">
+            <span class="tgl-label">⏱ <strong>Parçalı gönderim</strong> — listeyi parçalara bölerek gönder</span>
+            <label class="tgl"><input type="checkbox" id="b-batch-enabled" onchange="toggleBatchSettings()"><span class="tgl-sl"></span></label>
+        </div>
+        <div id="b-batch-settings" style="display:none;background:var(--s2);border-radius:var(--r3);padding:14px;margin-top:8px;border:1px solid var(--border)">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
+                <div class="field" style="margin:0">
+                    <label>Parti Boyutu <span style="color:var(--muted);font-size:10px">(her seferinde kaç mail)</span></label>
+                    <div style="display:flex;align-items:center;gap:10px">
+                        <input type="range" id="b-batch-size" min="50" max="1000" step="50" value="300"
+                            style="flex:1;accent-color:var(--accent);padding:0;height:auto"
+                            oninput="document.getElementById('b-batch-size-val').textContent=this.value">
+                        <span style="font-family:'Space Mono',monospace;font-size:12px;color:var(--accent);min-width:40px;text-align:right" id="b-batch-size-val">300</span>
+                    </div>
+                </div>
+                <div class="field" style="margin:0">
+                    <label>Partiler Arası Bekleme</label>
+                    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+                        <div style="display:flex;align-items:center;gap:4px">
+                            <input type="number" id="b-batch-wait-days" min="0" max="30" value="0"
+                                style="width:52px;text-align:center;padding:4px 6px;background:var(--s1);
+                                       border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px"
+                                oninput="updateBatchPreview()">
+                            <span style="font-size:11px;color:var(--muted)">gün</span>
+                        </div>
+                        <div style="display:flex;align-items:center;gap:4px">
+                            <input type="number" id="b-batch-wait-hours" min="0" max="23" value="1"
+                                style="width:52px;text-align:center;padding:4px 6px;background:var(--s1);
+                                       border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px"
+                                oninput="updateBatchPreview()">
+                            <span style="font-size:11px;color:var(--muted)">saat</span>
+                        </div>
+                        <div style="display:flex;align-items:center;gap:4px">
+                            <input type="number" id="b-batch-wait-mins" min="0" max="59" value="0"
+                                style="width:52px;text-align:center;padding:4px 6px;background:var(--s1);
+                                       border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px"
+                                oninput="updateBatchPreview()">
+                            <span style="font-size:11px;color:var(--muted)">dakika</span>
+                        </div>
+                    </div>
+                    <!-- Gizli toplam dakika hesaplama — backend'e bu gönderilir -->
+                    <input type="hidden" id="b-batch-wait">
+                </div>
+            </div>
+            <div style="margin-top:10px;font-size:11px;color:var(--muted)" id="b-batch-preview"></div>
+        </div>
+        <div class="field"><label>Ek Dosya (opsiyonel)</label>
+            <div class="fup" onclick="document.getElementById('b-att').click()">
+                <input type="file" id="b-att" onchange="showFn(this,'b-att-fn')">
+                <div class="fup-icon">📎</div><div class="fup-txt"><strong>Dosya seç</strong></div>
+                <div id="b-att-fn" class="fup-name"></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div id="ec2-bar" style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;padding:10px 14px;background:var(--s2);border-radius:var(--r);border:1px solid var(--border)">
+    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+        <span style="font-size:13px;font-weight:600">🖥 EC2</span>
+        <span id="ec2-instance-label" style="font-size:11px;color:var(--muted);font-family:'Space Mono',monospace"></span>
+        <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer">
+            <label class="tgl" style="margin:0"><input type="checkbox" id="ec2-autostop" onchange="syncEc2Toggle(this)"><span class="tgl-sl"></span></label>
+            Gönderim bitince otomatik kapat
+        </label>
+    </div>
+    <button class="btn btn-danger btn-sm" id="ec2-stop-btn" onclick="manualStopEc2()" title="EC2'yu şimdi durdur">
+        ⏹ Şimdi Kapat
+    </button>
+</div>
+
+<div style="display:flex;gap:10px">
+    <button class="btn btn-success btn-full" id="b-send-btn" onclick="startBulk()" style="flex:1">
+        <div class="sp" id="b-sp"></div><span id="b-btn-txt">🚀 Toplu Gönderimi Başlat</span>
+    </button>
+    <button class="btn btn-danger" id="b-stop-btn" onclick="stopBulk()" style="display:none;white-space:nowrap">
+        ⏹ Durdur
+    </button>
+</div>
+<div class="alert" id="b-alert"></div>
+
+<div id="b-prog-wrap" style="display:none;margin-top:18px">
+    <!-- Parti geri sayım kartı -->
+    <div id="b-batch-countdown-card" style="display:none;margin-bottom:12px;padding:18px 20px;background:var(--s2);border-radius:var(--r);border:1px solid var(--border);text-align:center">
+        <div style="font-size:13px;color:var(--muted);margin-bottom:6px" id="b-batch-status-txt">Sonraki parti bekleniyor...</div>
+        <div style="font-size:36px;font-weight:700;font-family:'Space Mono',monospace;color:var(--accent)" id="b-countdown-display">--:--</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:6px" id="b-batch-part-info"></div>
+        <button class="btn btn-outline btn-sm" style="margin-top:10px" onclick="skipBatchWait()" id="b-skip-wait-btn">⏭ Beklemeyi Atla</button>
+    </div>
+    <div class="card">
+        <div class="card-title" style="display:flex;align-items:center;justify-content:space-between">
+            <span id="b-prog-title">Gönderim Durumu</span>
+            <div id="b-export-btns" style="display:none;display:none;gap:6px">
+                <button class="btn btn-outline btn-sm" onclick="exportBulkLog('csv')" title="CSV olarak indir">
+                    📥 CSV İndir
+                </button>
+                <button class="btn btn-outline btn-sm" onclick="exportBulkLog('excel')" title="Excel olarak indir">
+                    📊 Excel İndir
+                </button>
+            </div>
+        </div>
+        <div class="prog-bg"><div class="prog-fill" id="b-fill"></div></div>
+        <div class="pstats">
+            <span class="ps-ok">✓ <span id="b-ok">0</span> başarılı</span>
+            <span class="ps-err">✗ <span id="b-err">0</span> hatalı</span>
+            <span class="ps-skip">⏭ <span id="b-skip">0</span> atlandı</span>
+            <span class="ps-tot">/ <span id="b-tot">0</span> toplam</span>
+        </div>
+        <div class="logbox" id="b-log"></div>
+    </div>
+</div>
+<!-- Kuyruk Paneli (hosting modu) -->
+<div id="queue-panel" style="display:none;margin-top:24px">
+    <div class="card">
+        <div class="card-title" style="display:flex;align-items:center;justify-content:space-between">
+            <span>📋 Görev Kuyruğu</span>
+            <button class="btn btn-outline btn-sm" onclick="loadQueueList()">🔄 Yenile</button>
+        </div>
+        <div id="queue-list-wrap">
+            <div style="text-align:center;color:var(--muted);padding:20px">Yükleniyor...</div>
+        </div>
+    </div>
+</div>
+<!-- ── Şablon Seçici Modal ──────────────────────────────────────────── -->
+<div id="tpl-picker-overlay"
+     style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:1000;
+            align-items:center;justify-content:center"
+     onclick="if(event.target===this) closeTplPicker()">
+    <div style="background:var(--s1);border:1px solid var(--border);border-radius:var(--r2);
+                width:90%;max-width:560px;max-height:80vh;display:flex;flex-direction:column;
+                box-shadow:0 20px 60px rgba(0,0,0,.4)">
+
+        <!-- Modal başlık -->
+        <div style="padding:18px 24px;border-bottom:1px solid var(--border);
+                    display:flex;align-items:center;justify-content:space-between">
+            <strong id="tpl-picker-title" style="font-size:14px">Şablon Seç</strong>
+            <button onclick="closeTplPicker()"
+                    style="background:none;border:none;color:var(--muted);font-size:20px;cursor:pointer">✕</button>
+        </div>
+
+        <!-- Arama kutusu -->
+        <div style="padding:12px 24px;border-bottom:1px solid var(--border)">
+            <input id="tpl-picker-search"
+                   placeholder="Şablon adı ara..."
+                   oninput="filterTplPicker(this.value)"
+                   style="width:100%">
+        </div>
+
+        <!-- Şablon listesi -->
+        <div id="tpl-picker-list"
+             style="flex:1;overflow-y:auto;padding:12px 24px">
+            <div style="text-align:center;color:var(--muted);padding:20px">Yükleniyor...</div>
+        </div>
+
+        <!-- Alt butonlar -->
+        <div style="padding:14px 24px;border-top:1px solid var(--border);
+                    display:flex;justify-content:flex-end;gap:8px">
+            <a href="/settings/templates" target="_blank"
+               style="font-size:12px;color:var(--accent);text-decoration:none;
+                      display:flex;align-items:center;gap:4px;margin-right:auto">
+                ⚙️ Şablonları Yönet
+            </a>
+            <button class="btn btn-outline btn-sm" onclick="closeTplPicker()">İptal</button>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+    window._hostingMode = false;
+
+    document.addEventListener('DOMContentLoaded', function() {
+        loadSenderSelects();
+        loadRules();
+        loadDbTables();
+        switchListSource('db');
+        document.getElementById('b-rule').addEventListener('change', onRuleChange);
+
+        // Mod kontrolü — local mi hosting mi?
+        fetch('/api/queue/mode').then(r=>r.json()).then(d=>{
+            if (d.mode === 'hosting') {
+                window._hostingMode = true;
+                const bar       = document.getElementById('hosting-mode-bar');
+                const nameField = document.getElementById('queue-name-field');
+                const queuePanel= document.getElementById('queue-panel');
+                const ec2bar    = document.getElementById('ec2-bar');
+                if (bar)        { bar.style.display = 'flex'; }
+                if (nameField)  { nameField.style.display = 'block'; }
+                if (queuePanel) { queuePanel.style.display = 'block'; }
+                if (ec2bar)     { ec2bar.style.display = 'none'; }
+                document.getElementById('b-btn-txt').textContent = '📋 Kuyruğa Ekle';
+                loadQueueList();
+            }
+        }).catch(()=>{});
+
+        // EC2 üzerinde çalışıyor mu kontrol et
+        fetch('/api/ec2-instance-id').then(r => r.json()).then(d => {
+            const lbl = document.getElementById('ec2-instance-label');
+            const stopBtn = document.getElementById('ec2-stop-btn');
+            const toggleBar = document.getElementById('ec2-autostop');
+
+            if (d.success && d.instance_id) {
+                lbl.textContent = '(' + d.instance_id + ')';
+            } else {
+                lbl.textContent = '(EC2 üzerinde değil)';
+                lbl.style.color = 'var(--err)';
+                if (stopBtn)   { stopBtn.disabled = true; stopBtn.title = 'Sadece EC2 üzerinde çalışır'; }
+                if (toggleBar) { toggleBar.disabled = true; }
+            }
+        }).catch(() => {
+            const lbl = document.getElementById('ec2-instance-label');
+            if (lbl) { lbl.textContent = '(bağlantı hatası)'; lbl.style.color = 'var(--err)'; }
+        });
+    });
+
+    function toggleBatchSettings() {
+        const enabled = document.getElementById('b-batch-enabled').checked;
+        document.getElementById('b-batch-settings').style.display = enabled ? 'block' : 'none';
+        updateBatchPreview();
+    }
+
+    // Gün+saat+dakika → toplam dakika hesapla ve hidden input'a yaz
+    function calcBatchWaitMinutes() {
+        const days  = parseInt(document.getElementById('b-batch-wait-days')?.value  || 0);
+        const hours = parseInt(document.getElementById('b-batch-wait-hours')?.value || 1);
+        const mins  = parseInt(document.getElementById('b-batch-wait-mins')?.value  || 0);
+        const total = (days * 24 * 60) + (hours * 60) + mins;
+        const hidden = document.getElementById('b-batch-wait');
+        if (hidden) hidden.value = total < 1 ? 1 : total;  // En az 1 dakika
+        return total < 1 ? 1 : total;
+    }
+
+    function updateBatchPreview() {
+        const size  = parseInt(document.getElementById('b-batch-size').value);
+        const total = calcBatchWaitMinutes();
+        const prev  = document.getElementById('b-batch-preview');
+        if (!prev) return;
+
+        // Bekleme süresini okunabilir formatta göster
+        const d = Math.floor(total / 1440);
+        const h = Math.floor((total % 1440) / 60);
+        const m = total % 60;
+        let waitStr = '';
+        if (d > 0) waitStr += `${d} gün `;
+        if (h > 0) waitStr += `${h} saat `;
+        if (m > 0) waitStr += `${m} dakika`;
+        waitStr = waitStr.trim() || '1 dakika';
+
+        // Hosting modunda arka plan bilgisi göster
+        const isHosting = window._hostingMode || false;
+        const bgNote = isHosting
+            ? ' <span style="color:var(--ok)">· ✓ Arka planda çalışır, sayfayı kapatabilirsiniz</span>'
+            : ' <span style="color:var(--warn)">· ⚠ Sayfa açık kalmalı (local mod)</span>';
+
+        prev.innerHTML = `<span style="color:var(--accent)">⏱</span> Her <strong>${size}</strong> mail → <strong>${waitStr}</strong> bekle${bgNote}`;
+    }
+
+    document.addEventListener('DOMContentLoaded', function() {
+        // Tüm batch wait input'larına listener ekle
+        ['b-batch-size','b-batch-wait-days','b-batch-wait-hours','b-batch-wait-mins'].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.addEventListener('input', updateBatchPreview);
+        });
+        calcBatchWaitMinutes();
+        updateBatchPreview();
+    });
+
+    // --- Parti geri sayım yönetimi ---
+    let _batchCountdownTimer = null;
+    let _batchSkipResolve = null;
+
+    function showBatchCountdown(waitMinutes, partNo, totalParts) {
+        const card = document.getElementById('b-batch-countdown-card');
+        const display = document.getElementById('b-countdown-display');
+        const statusTxt = document.getElementById('b-batch-status-txt');
+        const partInfo = document.getElementById('b-batch-part-info');
+        card.style.display = 'block';
+        statusTxt.textContent = `Parti ${partNo} tamamlandı — sonraki parti için bekleniyor`;
+        partInfo.textContent = `Parti ${partNo} / ${totalParts}`;
+
+        let remaining = waitMinutes * 60;
+        function tick() {
+            // Gün/saat/dakika/saniye formatında göster
+            const totalSec = remaining;
+            const dd = Math.floor(totalSec / 86400);
+            const hh = Math.floor((totalSec % 86400) / 3600);
+            const mm = Math.floor((totalSec % 3600) / 60);
+            const ss = totalSec % 60;
+            if (dd > 0) {
+                display.textContent = `${dd}g ${String(hh).padStart(2,'0')}:${String(mm).padStart(2,'0')}:${String(ss).padStart(2,'0')}`;
+            } else {
+                display.textContent = `${String(hh).padStart(2,'0')}:${String(mm).padStart(2,'0')}:${String(ss).padStart(2,'0')}`;
+            }
+            if (remaining <= 0) {
+                clearInterval(_batchCountdownTimer);
+                card.style.display = 'none';
+                if (_batchSkipResolve) { _batchSkipResolve(); _batchSkipResolve = null; }
+            }
+            remaining--;
+        }
+        tick();
+        _batchCountdownTimer = setInterval(tick, 1000);
+
+        return new Promise(resolve => {
+            _batchSkipResolve = (reason) => {
+                if (reason === 'stop') window._bulkStopped = true;
+                resolve();
+            };
+        });
+    }
+
+    function skipBatchWait() {
+        if (_batchCountdownTimer) clearInterval(_batchCountdownTimer);
+        document.getElementById('b-batch-countdown-card').style.display = 'none';
+        if (_batchSkipResolve) { _batchSkipResolve('skip'); _batchSkipResolve = null; }
+    }
+
+    function stopBulk() {
+        window._bulkStopped = true;
+        if (window._bulkAbort) window._bulkAbort.abort();
+        if (_batchCountdownTimer) clearInterval(_batchCountdownTimer);
+        document.getElementById('b-batch-countdown-card').style.display = 'none';
+        if (_batchSkipResolve) { _batchSkipResolve('stop'); _batchSkipResolve = null; }
+    }
+
+    // ── Hosting Modu: startBulk override ─────────────────────────────
+    const _origStartBulk = window.startBulk; // main.js'deki orijinal fonksiyon
+
+    // main.js'deki startBulk global'i yüklendikten sonra override et
+    window.addEventListener('load', () => {
+        const _mainStartBulk = window.startBulk;
+        window.startBulk = async function() {
+            if (!window._hostingMode) return _mainStartBulk();
+            return enqueueJob();
+        };
+    });
+
+    async function enqueueJob() {
+        const isDb = listSource === 'db';
+        const sid  = document.getElementById('b-sender').value;
+        const subj = document.getElementById('b-subject').value.trim();
+        const body = document.getElementById('b-body').value.trim();
+        const ecol = isDb ? document.getElementById('b-db-email-col').value
+                          : document.getElementById('b-email-col').value;
+
+        if (!sid || !subj || !body || !ecol) {
+            showAlert('b-alert', 'Gönderici, e-posta sütunu, konu ve mesaj zorunludur.', 'err'); return;
+        }
+
+        const btn = document.getElementById('b-send-btn');
+        const btxt = document.getElementById('b-btn-txt');
+        const sp   = document.getElementById('b-sp');
+        btn.disabled = true; sp.style.display = 'block'; btxt.textContent = 'Kuyruğa ekleniyor...';
+        hideAlert('b-alert');
+
+        const fd = new FormData();
+        fd.append('sender_id', sid);
+        fd.append('rule_id', document.getElementById('b-rule').value || '');
+        fd.append('name', document.getElementById('b-queue-name').value.trim() || `Görev ${new Date().toLocaleString('tr')}`);
+        fd.append('source_type', isDb ? 'db' : 'excel');
+        fd.append('email_col', ecol);
+        fd.append('subject', subj);
+        fd.append('body', body);
+        fd.append('html_mode', document.getElementById('b-html').checked ? 'true' : 'false');
+        fd.append('include_unsubscribe', document.getElementById('b-unsub').checked ? 'true' : 'false');
+        fd.append('mx_check', document.getElementById('b-mx-check') && document.getElementById('b-mx-check').checked ? 'true' : 'false');
+        fd.append('only_valid', document.getElementById('b-only-valid') && document.getElementById('b-only-valid').checked ? 'true' : 'false');
+        fd.append('delay_ms', document.getElementById('b-delay').value);
+
+        const batchEnabled = document.getElementById('b-batch-enabled').checked;
+        fd.append('batch_size',    batchEnabled ? document.getElementById('b-batch-size').value : '0');
+        // Toplam dakika = gün×1440 + saat×60 + dakika (calcBatchWaitMinutes hidden input'a yazar)
+        fd.append('batch_wait_min', batchEnabled ? (calcBatchWaitMinutes() || 60) : '60');
+
+        if (isDb) {
+            fd.append('table_name', document.getElementById('b-db-table').value);
+            const vsel = document.getElementById('b-db-var-cols');
+            if (vsel) fd.append('var_cols', Array.from(vsel.selectedOptions).map(o=>o.value).join(','));
+        } else {
+            const excel = document.getElementById('b-excel').files[0];
+            if (!excel) { showAlert('b-alert', 'Excel dosyası seçin.', 'err'); btn.disabled=false; sp.style.display='none'; btxt.textContent='📋 Kuyruğa Ekle'; return; }
+            fd.append('excel', excel);
+            const vsel = document.getElementById('b-var-cols');
+            fd.append('var_cols', Array.from(vsel.selectedOptions).map(o=>o.value).join(','));
+        }
+
+        const att = document.getElementById('b-att');
+        if (att.files[0]) fd.append('attachment', att.files[0]);
+
+        try {
+            const d = await (await fetch('/api/queue/create', { method: 'POST', body: fd })).json();
+            if (d.success) {
+                showAlert('b-alert', '✅ ' + d.message, 'ok');
+                // İlerleme takibini başlat
+                startQueuePolling(d.queue_id);
+                loadQueueList();
+            } else {
+                showAlert('b-alert', '❌ ' + d.message, 'err');
+            }
+        } catch(e) { showAlert('b-alert', 'Bağlantı hatası: ' + e, 'err'); }
+        finally { btn.disabled=false; sp.style.display='none'; btxt.textContent='📋 Kuyruğa Ekle'; }
+    }
+
+    // ── Kuyruk İlerleme Takibi (polling) ─────────────────────────────
+    let _queuePollTimer = null;
+
+    function startQueuePolling(qid) {
+        document.getElementById('b-prog-wrap').style.display = 'block';
+        document.getElementById('b-log').innerHTML = '';
+        if (_queuePollTimer) clearInterval(_queuePollTimer);
+        _queuePollTimer = setInterval(() => pollQueueProgress(qid), 5000);
+        pollQueueProgress(qid);
+    }
+
+    async function pollQueueProgress(qid) {
+        try {
+            const d = await (await fetch(`/api/queue/progress/${qid}`)).json();
+            if (!d.success) return;
+            const q = d.data;
+
+            // Progress bar
+            const pct = q.total_count > 0 ? Math.round(q.current_offset / q.total_count * 100) : 0;
+            const fill = document.getElementById('b-fill');
+            if (fill) fill.style.width = pct + '%';
+
+            // Sayaçlar
+            const set = (id, v) => { const el=document.getElementById(id); if(el) el.textContent=v; };
+            set('b-ok',   q.sent_count);
+            set('b-err',  q.failed_count);
+            set('b-skip', q.skipped_count);
+            set('b-tot',  q.total_count);
+
+            const titleEl = document.getElementById('b-prog-title');
+            if (titleEl) {
+                const statusMap = {pending:'⏳ Bekliyor', running:'🔄 Gönderiliyor', paused:'⏸ Bekleniyor (sonraki parti)', done:'✅ Tamamlandı', cancelled:'⛔ İptal edildi'};
+                titleEl.textContent = `${statusMap[q.status]||q.status} — ${q.name}`;
+            }
+
+            // Geri sayım (paused ise)
+            if (q.status === 'paused' && q.next_run_at) {
+                const next = new Date(q.next_run_at + 'Z');
+                const remaining = Math.max(0, Math.round((next - Date.now()) / 1000));
+                const m = String(Math.floor(remaining/60)).padStart(2,'0');
+                const s = String(remaining%60).padStart(2,'0');
+                const card = document.getElementById('b-batch-countdown-card');
+                if (card) {
+                    card.style.display = 'block';
+                    const disp = document.getElementById('b-countdown-display');
+                    if (disp) disp.textContent = `${m}:${s}`;
+                    const info = document.getElementById('b-batch-part-info');
+                    if (info) info.textContent = `Offset: ${q.current_offset} / ${q.total_count}`;
+                    const skipBtn = document.getElementById('b-skip-wait-btn');
+                    if (skipBtn) skipBtn.style.display = 'none'; // Hosting modunda atla yok
+                    const statusTxt = document.getElementById('b-batch-status-txt');
+                    if (statusTxt) statusTxt.textContent = 'Worker sonraki partiyi çalıştırana kadar bekleniyor...';
+                }
+            } else {
+                const card = document.getElementById('b-batch-countdown-card');
+                if (card) card.style.display = 'none';
+            }
+
+            // Log satırları
+            const log = document.getElementById('b-log');
+            if (log && q.recent_logs && q.recent_logs.length) {
+                log.innerHTML = q.recent_logs.map(l => {
+                    const cls = l.status==='sent'?'l-ok':l.status==='failed'?'l-err':'l-skip';
+                    const icon = l.status==='sent'?'✓':l.status==='failed'?'✗':'⏭';
+                    return `<div class="${cls}">${icon} ${l.email}${l.error_msg?' — '+l.error_msg:''}</div>`;
+                }).join('');
+                log.scrollTop = log.scrollHeight;
+            }
+
+            // Bitti mi?
+            if (q.status === 'done' || q.status === 'cancelled') {
+                clearInterval(_queuePollTimer);
+                _queuePollTimer = null;
+                loadQueueList();
+            }
+        } catch(e) { console.error('Queue poll error:', e); }
+    }
+
+    // ── Kuyruk Listesi ────────────────────────────────────────────────
+    const STATUS_LABELS = {
+        pending:   '<span class="chip chip-off">⏳ Bekliyor</span>',
+        running:   '<span class="chip chip-ok">🔄 Çalışıyor</span>',
+        paused:    '<span class="chip" style="background:rgba(251,191,36,.1);color:#fbbf24;border-color:rgba(251,191,36,.3)">⏸ Beklemede</span>',
+        done:      '<span class="chip chip-ok">✅ Tamamlandı</span>',
+        cancelled: '<span class="chip chip-err">⛔ İptal</span>',
+    };
+
+    async function loadQueueList() {
+        const wrap = document.getElementById('queue-list-wrap');
+        if (!wrap) return;
+        try {
+            const d = await (await fetch('/api/queue/list')).json();
+            if (!d.success || !d.data.length) {
+                wrap.innerHTML = '<div style="text-align:center;color:var(--muted);padding:20px;font-size:13px">Henüz görev yok.</div>';
+                return;
+            }
+            wrap.innerHTML = `<table style="width:100%;border-collapse:collapse;font-size:12px">
+                <thead><tr style="border-bottom:1px solid var(--border)">
+                    <th style="text-align:left;padding:8px 10px;color:var(--muted);font-weight:500">#</th>
+                    <th style="text-align:left;padding:8px 10px;color:var(--muted);font-weight:500">Görev</th>
+                    <th style="text-align:left;padding:8px 10px;color:var(--muted);font-weight:500">Durum</th>
+                    <th style="text-align:left;padding:8px 10px;color:var(--muted);font-weight:500">İlerleme</th>
+                    <th style="text-align:left;padding:8px 10px;color:var(--muted);font-weight:500">Sonraki Parti</th>
+                    <th style="padding:8px 10px"></th>
+                </tr></thead>
+                <tbody>${d.data.map(q=>`
+                <tr style="border-bottom:1px solid var(--border)" id="qrow-${q.id}">
+                    <td style="padding:8px 10px;font-family:'Space Mono',monospace;color:var(--muted)">#${q.id}</td>
+                    <td style="padding:8px 10px"><strong>${esc(q.name)}</strong><br><span style="color:var(--muted);font-size:11px">${esc(q.sender_name||'')} &lt;${esc(q.sender_email||'')}&gt;</span></td>
+                    <td style="padding:8px 10px">${STATUS_LABELS[q.status]||q.status}</td>
+                    <td style="padding:8px 10px">
+                        <span style="color:#34d399">✓${q.sent_count}</span>
+                        <span style="color:#f87171;margin-left:6px">✗${q.failed_count}</span>
+                        <span style="color:var(--muted);margin-left:6px">⏭${q.skipped_count}</span>
+                        <span style="color:var(--muted);margin-left:6px">/${q.total_count||'?'}</span>
+                    </td>
+                    <td style="padding:8px 10px;font-size:11px;color:var(--muted)">${q.next_run_at&&q.status==='paused'?new Date(q.next_run_at+'Z').toLocaleTimeString('tr'):'-'}</td>
+                    <td style="padding:8px 10px;text-align:right;display:flex;gap:6px;justify-content:flex-end">
+                        ${['pending','running','paused'].includes(q.status)?`<button class="btn btn-outline btn-sm" onclick="trackQueue(${q.id})">📊 Takip</button>`:'' }
+                        ${['pending','running','paused'].includes(q.status)?`<button class="btn btn-danger btn-sm" onclick="cancelQueue(${q.id})">⛔ İptal</button>`:''}
+                    </td>
+                </tr>`).join('')}</tbody>
+            </table>`;
+        } catch(e) { wrap.innerHTML = '<div style="color:var(--err);padding:20px">Yüklenemedi.</div>'; }
+    }
+
+    function trackQueue(qid) {
+        document.getElementById('b-prog-wrap').style.display = 'block';
+        document.getElementById('b-prog-wrap').scrollIntoView({behavior:'smooth'});
+        startQueuePolling(qid);
+    }
+
+    async function cancelQueue(qid) {
+        if (!confirm(`#${qid} görevi iptal edilsin mi?`)) return;
+        const d = await (await fetch(`/api/queue/cancel/${qid}`, {method:'POST'})).json();
+        if (d.success) loadQueueList();
+        else alert('İptal edilemedi: ' + d.message);
+    }
+
+    /* ══════════════════════════════════════════════════════════════
+       ŞABLON SEÇİCİ — Modal açma, kapama, seçme, kaydetme
+       ══════════════════════════════════════════════════════════════ */
+
+    /* Hangi alan için açıldığını tutar: 'subject' | 'body' */
+    let _tplPickerTarget = 'subject';
+
+    /* Yüklenen şablonların tüm listesi (arama için) */
+    let _tplPickerItems = [];
+
+    /* ── Modal aç ───────────────────────────────────────────────── */
+    async function openTplPicker(type) {
+        _tplPickerTarget = type;
+
+        /* Başlığı güncelle */
+        document.getElementById('tpl-picker-title').textContent =
+            type === 'subject' ? '📌 Konu Şablonu Seç' : '📄 Mesaj Şablonu Seç';
+
+        /* Arama kutusunu temizle */
+        document.getElementById('tpl-picker-search').value = '';
+
+        /* Overlay'i göster */
+        const overlay = document.getElementById('tpl-picker-overlay');
+        overlay.style.display = 'flex';
+
+        /* API'den şablonları çek */
+        try {
+            const d = await (await fetch(`/api/templates?type=${type}`)).json();
+            _tplPickerItems = d.success ? d.data : [];
+            renderTplPickerList(_tplPickerItems);
+        } catch(e) {
+            document.getElementById('tpl-picker-list').innerHTML =
+                '<div style="color:var(--err)">Yüklenemedi: ' + e + '</div>';
+        }
+
+        /* Arama kutusuna odaklan */
+        setTimeout(() => document.getElementById('tpl-picker-search').focus(), 100);
+    }
+
+    /* ── Modal kapat ────────────────────────────────────────────── */
+    function closeTplPicker() {
+        document.getElementById('tpl-picker-overlay').style.display = 'none';
+    }
+
+    /* ── Arama kutusuna göre filtrele ───────────────────────────── */
+    function filterTplPicker(q) {
+        const filtered = q
+            ? _tplPickerItems.filter(t =>
+                t.name.toLowerCase().includes(q.toLowerCase()) ||
+                t.content.toLowerCase().includes(q.toLowerCase()))
+            : _tplPickerItems;
+        renderTplPickerList(filtered);
+    }
+
+    /* ── Liste HTML'ini oluştur ─────────────────────────────────── */
+    function renderTplPickerList(items) {
+        const wrap = document.getElementById('tpl-picker-list');
+        if (!items.length) {
+            wrap.innerHTML = '<div style="text-align:center;color:var(--muted);padding:24px">' +
+                'Şablon bulunamadı. <a href="/settings/templates" target="_blank" ' +
+                'style="color:var(--accent)">Şablon ekle →</a></div>';
+            return;
+        }
+
+        wrap.innerHTML = items.map(t => `
+        <div onclick="selectTpl(${t.id})"
+             style="padding:12px 14px;border-radius:var(--r);border:1px solid var(--border);
+                    margin-bottom:8px;cursor:pointer;transition:all .15s"
+             onmouseover="this.style.borderColor='var(--accent)';this.style.background='var(--s2)'"
+             onmouseout="this.style.borderColor='var(--border)';this.style.background=''">
+            <!-- Şablon adı -->
+            <div style="font-weight:600;font-size:13px;margin-bottom:4px">${esc(t.name)}</div>
+            <!-- İçerik önizlemesi -->
+            <div style="font-size:12px;color:var(--muted);overflow:hidden;
+                        text-overflow:ellipsis;white-space:nowrap;max-width:460px">
+                ${esc(t.content.slice(0, 100))}${t.content.length > 100 ? '…' : ''}
+            </div>
+        </div>`).join('');
+    }
+
+    /* ── Şablonu seç ve ilgili alana yaz ───────────────────────── */
+    async function selectTpl(id) {
+        try {
+            const d = await (await fetch(`/api/templates/${id}`)).json();
+            if (!d.success) { alert('Şablon yüklenemedi.'); return; }
+
+            const tpl = d.data;
+            if (_tplPickerTarget === 'subject') {
+                /* Konu alanına yaz */
+                document.getElementById('b-subject').value = tpl.content;
+            } else {
+                /* Mesaj alanına yaz */
+                document.getElementById('b-body').value = tpl.content;
+            }
+            closeTplPicker();
+        } catch(e) {
+            alert('Hata: ' + e);
+        }
+    }
+
+    /* ── Mevcut konu veya mesajı şablon olarak kaydet ─────────── */
+    async function saveCurrentAsTemplate(type) {
+        /* İlgili alandan değeri al */
+        const content = type === 'subject'
+            ? document.getElementById('b-subject').value.trim()
+            : document.getElementById('b-body').value.trim();
+
+        if (!content) {
+            alert(type === 'subject' ? 'Konu boş!' : 'Mesaj boş!');
+            return;
+        }
+
+        /* Şablon adını kullanıcıdan al */
+        const name = prompt(
+            (type === 'subject' ? '📌 Konu' : '📄 Mesaj') + ' şablonu adı girin:',
+            type === 'subject' ? 'Yeni Konu Şablonu' : 'Yeni Mesaj Şablonu'
+        );
+        if (!name || !name.trim()) return;
+
+        try {
+            const d = await (await fetch('/api/templates/create', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ type, name: name.trim(), content })
+            })).json();
+
+            if (d.success) {
+                /* Kısa başarı bildirimi */
+                const btn = event.target;
+                const orig = btn.textContent;
+                btn.textContent = '✅ Kaydedildi!';
+                setTimeout(() => { btn.textContent = orig; }, 2000);
+            } else {
+                alert('Kaydedilemedi: ' + d.message);
+            }
+        } catch(e) {
+            alert('Bağlantı hatası: ' + e);
+        }
+    }
+
+    /* ESC tuşuyla modal kapat */
+    document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape') closeTplPicker();
+    });
+</script>
+{% endblock %}

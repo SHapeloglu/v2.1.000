@@ -1,0 +1,564 @@
+{% extends "pages/settings/base.html" %}
+{% set active_tab = 'api' %}
+{% block title %}API Göndericiler{% endblock %}
+{% block subtitle %}HTTP API üzerinden gönderim — Mailrelay, SendGrid, Postmark, Brevo ve diğerleri{% endblock %}
+
+{% block settings_content %}
+
+<!-- API Gönderici Listesi -->
+<div id="api-list" style="margin-bottom:20px">
+    <div style="color:var(--muted);text-align:center;padding:20px">Yükleniyor...</div>
+</div>
+
+<!-- API Form -->
+<div class="card">
+    <div class="card-title" id="api-form-title">➕ Yeni API Gönderici</div>
+
+    <div style="font-size:12px;color:var(--muted);padding:10px 13px;background:rgba(124,111,253,.07);border:1px solid rgba(124,111,253,.2);border-radius:var(--r);margin-bottom:18px;line-height:1.7">
+        🔌 Herhangi bir HTTP e-posta API'siyle çalışır. Payload template içindeki
+        <code style="background:var(--s2);padding:1px 5px;border-radius:4px;font-size:11px">FROM_EMAIL</code>
+        <code style="background:var(--s2);padding:1px 5px;border-radius:4px;font-size:11px">RECIPIENT_EMAIL</code>
+        <code style="background:var(--s2);padding:1px 5px;border-radius:4px;font-size:11px">SUBJECT_TEXT</code>
+        <code style="background:var(--s2);padding:1px 5px;border-radius:4px;font-size:11px">HTML_CONTENT</code>
+        değerleri gönderim sırasında otomatik doldurulur.
+    </div>
+
+    <div class="fg">
+
+        <!-- Temel Bilgiler -->
+        <div class="g2">
+            <div class="field">
+                <label>Gönderici Adı *</label>
+                <input id="api-name" placeholder="Mailrelay Hesabım">
+            </div>
+            <div class="field">
+                <label>Gönderici E-posta *</label>
+                <input id="api-email" placeholder="info@firma.com">
+            </div>
+        </div>
+
+        <!-- API Bağlantı -->
+        <div style="padding:16px;background:var(--s2);border-radius:var(--r2)">
+            <div style="font-size:11px;font-weight:600;color:var(--muted);margin-bottom:12px;text-transform:uppercase;letter-spacing:.06em">🌐 API Bağlantısı</div>
+            <div class="g2">
+                <div class="field">
+                    <label>Host * <span style="font-size:10px;color:var(--muted)">(protokolsüz)</span></label>
+                    <input id="api-host" placeholder="bidanismanlik.ipzmarketing.com">
+                    <div style="font-size:10px;color:var(--muted);margin-top:3px">Örn: api.mailrelay.com &nbsp;·&nbsp; smtp.resend.com</div>
+                </div>
+                <div class="field">
+                    <label>Endpoint *</label>
+                    <input id="api-endpoint" placeholder="/api/v1/send_emails">
+                    <div style="font-size:10px;color:var(--muted);margin-top:3px">Başına / koymayı unutmayın</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Auth -->
+        <div style="padding:16px;background:var(--s2);border-radius:var(--r2)">
+            <div style="font-size:11px;font-weight:600;color:var(--muted);margin-bottom:12px;text-transform:uppercase;letter-spacing:.06em">🔑 Kimlik Doğrulama</div>
+            <div class="g3">
+                <div class="field">
+                    <label>Auth Tipi</label>
+                    <select id="api-auth-type" onchange="onAuthTypeChange()">
+                        <option value="X-AUTH-TOKEN">X-AUTH-TOKEN (Mailrelay)</option>
+                        <option value="Bearer">Authorization: Bearer</option>
+                        <option value="Token">Authorization: Token</option>
+                        <option value="api-key">api-key (Brevo)</option>
+                        <option value="apikey">apikey</option>
+                        <option value="X-API-KEY">X-API-KEY</option>
+                        <option value="custom">Özel header...</option>
+                    </select>
+                </div>
+                <div class="field" id="auth-custom-wrap" style="display:none">
+                    <label>Özel Header Adı</label>
+                    <input id="api-auth-custom" placeholder="X-My-Token">
+                </div>
+                <div class="field">
+                    <label>Token * <span style="font-size:10px;color:var(--muted)">(düzenlemede boş = değiştirme)</span></label>
+                    <div class="pw-wrap">
+                        <input type="password" id="api-token" placeholder="••••••••">
+                        <button class="pw-eye" onclick="togglePw('api-token',this)">👁</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Method -->
+        <div class="field" style="max-width:180px">
+            <label>HTTP Metodu</label>
+            <select id="api-method">
+                <option value="POST">POST</option>
+                <option value="PUT">PUT</option>
+            </select>
+        </div>
+
+        <!-- Payload Template -->
+        <div style="padding:16px;background:var(--s2);border-radius:var(--r2)">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:8px">
+                <div style="font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.06em">📄 JSON Payload Template</div>
+                <div style="display:flex;gap:5px;flex-wrap:wrap">
+                    <button class="btn btn-outline btn-sm" onclick="loadPreset('mailrelay')" style="font-size:11px">📮 Mailrelay</button>
+                    <button class="btn btn-outline btn-sm" onclick="loadPreset('sendgrid')" style="font-size:11px">✉ SendGrid</button>
+                    <button class="btn btn-outline btn-sm" onclick="loadPreset('postmark')" style="font-size:11px">📬 Postmark</button>
+                    <button class="btn btn-outline btn-sm" onclick="loadPreset('resend')" style="font-size:11px">⚡ Resend</button>
+                    <button class="btn btn-outline btn-sm" onclick="loadPreset('brevo')" style="font-size:11px">💙 Brevo</button>
+                    <button class="btn btn-outline btn-sm" onclick="loadPreset('generic')" style="font-size:11px">🔧 Genel</button>
+                </div>
+            </div>
+
+            <textarea id="api-payload" rows="14"
+                style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:var(--r);padding:12px;font-family:'Space Mono',monospace;font-size:11px;color:var(--text);resize:vertical;line-height:1.65;box-sizing:border-box"
+                oninput="validatePayloadJson(this)"></textarea>
+            <div id="json-err" style="font-size:11px;color:#f87171;margin-top:5px;display:none"></div>
+
+            <!-- Değişken etiketleri -->
+            <div style="margin-top:10px">
+                <div style="font-size:10px;color:var(--muted);margin-bottom:6px">Tıklayarak imlece ekle:</div>
+                <div class="var-tags">
+                    <span class="var-tag" onclick="insertVar('FROM_EMAIL')" title="Gönderici e-posta">FROM_EMAIL</span>
+                    <span class="var-tag" onclick="insertVar('FROM_NAME')" title="Gönderici adı">FROM_NAME</span>
+                    <span class="var-tag" onclick="insertVar('RECIPIENT_EMAIL')" title="Alıcı e-posta">RECIPIENT_EMAIL</span>
+                    <span class="var-tag" onclick="insertVar('RECIPIENT_NAME')" title="Alıcı adı">RECIPIENT_NAME</span>
+                    <span class="var-tag" onclick="insertVar('SUBJECT_TEXT')" title="Konu">SUBJECT_TEXT</span>
+                    <span class="var-tag" onclick="insertVar('HTML_CONTENT')" title="HTML içerik">HTML_CONTENT</span>
+                </div>
+            </div>
+        </div>
+
+    </div><!-- /fg -->
+
+    <div class="btn-row" style="margin-top:16px">
+        <button class="btn btn-primary" onclick="saveApi()">
+            <div class="sp" id="api-sp"></div>
+            <span id="api-btn-txt">💾 Kaydet</span>
+        </button>
+        <button class="btn btn-outline" onclick="cancelApi()" id="api-cancel-btn" style="display:none">İptal</button>
+    </div>
+    <div class="alert" id="api-alert"></div>
+</div>
+
+
+<!-- ── Webhook Kurulum Rehberi ──────────────────────────────────────── -->
+<div class="card">
+    <div class="card-title">🔔 Bounce/Complaint Webhook Kurulumu
+        <span class="badge" style="margin-left:8px;font-size:10px">Otomatik Suppression</span>
+    </div>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:16px">
+        Bounce ve şikayet bildirimlerini otomatik almak için servisinizin panelinde aşağıdaki URL'leri tanımlayın.
+        Gelen bildirimler suppression listesine otomatik eklenir.
+    </div>
+
+    <div style="display:flex;flex-direction:column;gap:12px">
+        <!-- Brevo -->
+        <div style="background:var(--s2);border:1px solid var(--border);border-radius:10px;padding:14px">
+            <div style="font-weight:600;margin-bottom:8px">🟦 Brevo</div>
+            <div class="fg" style="gap:8px">
+                <div class="field" style="margin:0">
+                    <label style="font-size:10px">Webhook URL</label>
+                    <div style="display:flex;gap:6px">
+                        <input id="wb-brevo-url" readonly
+                               style="flex:1;font-size:11px;font-family:monospace;
+                                      background:var(--bg);padding:6px 10px;
+                                      border:1px solid var(--border);border-radius:6px;color:var(--text)">
+                        <button class="btn btn-outline btn-sm" onclick="copyWebhookUrl('wb-brevo-url')">📋</button>
+                    </div>
+                </div>
+            </div>
+            <div style="font-size:11px;color:var(--muted);margin-top:8px">
+                Brevo Dashboard → <strong>Settings → Webhooks → Add a new webhook</strong><br>
+                Events: <code>hard_bounce</code>, <code>spam</code>, <code>unsubscribe</code>
+            </div>
+        </div>
+
+        <!-- Mailrelay -->
+        <div style="background:var(--s2);border:1px solid var(--border);border-radius:10px;padding:14px">
+            <div style="font-weight:600;margin-bottom:8px">🟩 Mailrelay</div>
+            <div class="fg" style="gap:8px">
+                <div class="field" style="margin:0">
+                    <label style="font-size:10px">Webhook URL</label>
+                    <div style="display:flex;gap:6px">
+                        <input id="wb-mailrelay-url" readonly
+                               style="flex:1;font-size:11px;font-family:monospace;
+                                      background:var(--bg);padding:6px 10px;
+                                      border:1px solid var(--border);border-radius:6px;color:var(--text)">
+                        <button class="btn btn-outline btn-sm" onclick="copyWebhookUrl('wb-mailrelay-url')">📋</button>
+                    </div>
+                </div>
+            </div>
+            <div style="font-size:11px;color:var(--muted);margin-top:8px">
+                Mailrelay Panel → <strong>Configuración → Notificaciones → Añadir URL</strong><br>
+                Events: bounce, complaint, unsubscribe
+            </div>
+        </div>
+
+        <!-- SES SNS -->
+        <div style="background:var(--s2);border:1px solid var(--border);border-radius:10px;padding:14px">
+            <div style="font-weight:600;margin-bottom:8px">🟧 AWS SES (SNS)</div>
+            <div class="fg" style="gap:8px">
+                <div class="field" style="margin:0">
+                    <label style="font-size:10px">SNS HTTP Subscription URL</label>
+                    <div style="display:flex;gap:6px">
+                        <input id="wb-ses-url" readonly
+                               style="flex:1;font-size:11px;font-family:monospace;
+                                      background:var(--bg);padding:6px 10px;
+                                      border:1px solid var(--border);border-radius:6px;color:var(--text)">
+                        <button class="btn btn-outline btn-sm" onclick="copyWebhookUrl('wb-ses-url')">📋</button>
+                    </div>
+                </div>
+            </div>
+            <div style="font-size:11px;color:var(--muted);margin-top:8px">
+                1) AWS SNS → <strong>Create Topic</strong> (Standard) → Topic ARN'ı kopyala<br>
+                2) Topic → <strong>Create Subscription</strong> → Protocol: HTTPS → Endpoint: yukarıdaki URL<br>
+                3) SES → <strong>Configuration Sets</strong> → Event Destinations → SNS → Bounce + Complaint seç<br>
+                4) İlk POST geldiğinde abonelik otomatik onaylanır.
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+// Webhook URL'lerini doldur
+(async function loadWebhookUrls() {
+    try {
+        const r = await fetch('/webhook/status');
+        const d = await r.json();
+        if (!d.success) return;
+        const ep = d.endpoints || {};
+        const el = (id, val) => { const e = document.getElementById(id); if(e) e.value = val||''; };
+        el('wb-brevo-url',    ep.brevo);
+        el('wb-mailrelay-url',ep.mailrelay);
+        el('wb-ses-url',      ep.ses_sns);
+    } catch(e) {}
+})();
+
+function copyWebhookUrl(inputId) {
+    const el = document.getElementById(inputId);
+    if (!el) return;
+    navigator.clipboard.writeText(el.value).then(() => {
+        const btn = el.nextElementSibling;
+        if (btn) { btn.textContent = '✓'; setTimeout(() => btn.textContent = '📋', 1500); }
+    });
+}
+</script>
+
+<script>
+let _editApiId = null;
+
+/* ── Preset Templateler ──────────────────────────────────────────────── */
+const PRESETS = {
+    mailrelay: {
+        _host: 'ipzmarketing.com', _endpoint: '/api/v1/campaigns/send_transactional',
+        _auth: 'X-AUTH-TOKEN', _method: 'POST',
+        payload: {
+            "from":    {"email": "FROM_EMAIL", "name": "FROM_NAME"},
+            "to":      [{"email": "RECIPIENT_EMAIL", "name": "RECIPIENT_NAME"}],
+            "subject": "SUBJECT_TEXT",
+            "html_part": "HTML_CONTENT",
+            "text_part_auto": true
+        }
+    },
+    sendgrid: {
+        _host: 'api.sendgrid.com', _endpoint: '/v3/mail/send',
+        _auth: 'Bearer', _method: 'POST',
+        payload: {
+            "personalizations": [{"to": [{"email": "RECIPIENT_EMAIL", "name": "RECIPIENT_NAME"}]}],
+            "from":    {"email": "FROM_EMAIL", "name": "FROM_NAME"},
+            "subject": "SUBJECT_TEXT",
+            "content": [{"type": "text/html", "value": "HTML_CONTENT"}]
+        }
+    },
+    postmark: {
+        _host: 'api.postmarkapp.com', _endpoint: '/email',
+        _auth: 'X-Postmark-Server-Token', _method: 'POST',
+        payload: {
+            "From":    "FROM_NAME <FROM_EMAIL>",
+            "To":      "RECIPIENT_EMAIL",
+            "Subject": "SUBJECT_TEXT",
+            "HtmlBody": "HTML_CONTENT",
+            "MessageStream": "outbound"
+        }
+    },
+    resend: {
+        _host: 'api.resend.com', _endpoint: '/emails',
+        _auth: 'Bearer', _method: 'POST',
+        payload: {
+            "from":    "FROM_NAME <FROM_EMAIL>",
+            "to":      ["RECIPIENT_EMAIL"],
+            "subject": "SUBJECT_TEXT",
+            "html":    "HTML_CONTENT"
+        }
+    },
+    brevo: {
+        _host: 'api.brevo.com', _endpoint: '/v3/smtp/email',
+        _auth: 'api-key', _method: 'POST',
+        payload: {
+            "sender":      {"email": "FROM_EMAIL", "name": "FROM_NAME"},
+            "to":          [{"email": "RECIPIENT_EMAIL", "name": "RECIPIENT_NAME"}],
+            "subject":     "SUBJECT_TEXT",
+            "htmlContent": "HTML_CONTENT"
+        }
+    },
+    generic: {
+        _host: '', _endpoint: '', _auth: 'X-AUTH-TOKEN', _method: 'POST',
+        payload: {
+            "from":    "FROM_EMAIL",
+            "to":      "RECIPIENT_EMAIL",
+            "subject": "SUBJECT_TEXT",
+            "html":    "HTML_CONTENT"
+        }
+    }
+};
+
+document.addEventListener('DOMContentLoaded', () => {
+    loadApiList();
+    loadPreset('mailrelay');
+});
+
+function loadPreset(name) {
+    const p = PRESETS[name];
+    if (!p) return;
+    // JSON payload
+    document.getElementById('api-payload').value = JSON.stringify(p.payload, null, 2);
+    validatePayloadJson(document.getElementById('api-payload'));
+    // Host / endpoint / auth — sadece boşsa doldur (düzenleme modunda ezme)
+    const hostEl = document.getElementById('api-host');
+    const epEl   = document.getElementById('api-endpoint');
+    const authEl = document.getElementById('api-auth-type');
+    if (hostEl && !hostEl.value) hostEl.value = p._host || '';
+    if (epEl   && !epEl.value)   epEl.value   = p._endpoint || '';
+    if (authEl && p._auth) {
+        const opts = Array.from(authEl.options).map(o => o.value);
+        authEl.value = opts.includes(p._auth) ? p._auth : 'custom';
+        if (authEl.value === 'custom') {
+            const cEl = document.getElementById('api-auth-custom');
+            if (cEl) cEl.value = p._auth;
+        }
+        onAuthTypeChange();
+    }
+}
+
+function validatePayloadJson(el) {
+    const errEl = document.getElementById('json-err');
+    try {
+        JSON.parse(el.value);
+        el.style.borderColor = 'var(--border)';
+        if (errEl) errEl.style.display = 'none';
+        return true;
+    } catch(e) {
+        el.style.borderColor = '#f87171';
+        if (errEl) { errEl.textContent = '⚠ Geçersiz JSON: ' + e.message; errEl.style.display = 'block'; }
+        return false;
+    }
+}
+
+function onAuthTypeChange() {
+    const v = document.getElementById('api-auth-type').value;
+    document.getElementById('auth-custom-wrap').style.display = v === 'custom' ? 'block' : 'none';
+}
+
+function insertVar(v) {
+    const el = document.getElementById('api-payload');
+    const s = el.selectionStart, e2 = el.selectionEnd;
+    el.value = el.value.slice(0, s) + v + el.value.slice(e2);
+    el.selectionStart = el.selectionEnd = s + v.length;
+    el.focus();
+    validatePayloadJson(el);
+}
+
+/* ── Liste ───────────────────────────────────────────────────────────── */
+async function loadApiList() {
+    try {
+        const d = await (await fetch('/api/senders')).json();
+        const senders = (d.data || []).filter(s => s.sender_mode === 'api');
+        const container = document.getElementById('api-list');
+        if (!senders.length) {
+            container.innerHTML = '<div class="card" style="padding:20px;text-align:center;color:var(--muted)">Henüz API gönderici eklenmedi. Aşağıdan ekleyin.</div>';
+            return;
+        }
+        container.innerHTML = `
+        <div style="background:var(--s1);border:1px solid var(--border);border-radius:var(--r3);overflow:hidden">
+            <table style="width:100%;border-collapse:collapse;font-size:13px;table-layout:fixed">
+                <colgroup>
+                    <col style="width:24%">
+                    <col style="width:14%">
+                    <col style="width:30%">
+                    <col style="width:14%">
+                    <col style="width:10%">
+                    <col style="width:108px">
+                </colgroup>
+                <thead>
+                    <tr style="border-bottom:1px solid var(--border)">
+                        <th style="text-align:left;padding:11px 16px;color:var(--muted);font-weight:500;font-size:11px">Ad / E-posta</th>
+                        <th style="text-align:left;padding:11px 16px;color:var(--muted);font-weight:500;font-size:11px">Servis</th>
+                        <th style="text-align:left;padding:11px 16px;color:var(--muted);font-weight:500;font-size:11px">Host / Endpoint</th>
+                        <th style="text-align:left;padding:11px 16px;color:var(--muted);font-weight:500;font-size:11px">Auth</th>
+                        <th style="text-align:left;padding:11px 16px;color:var(--muted);font-weight:500;font-size:11px">Durum</th>
+                        <th style="padding:11px 16px"></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${senders.map(s => {
+                        const svc = detectApiService(s.api_host);
+                        return `
+                    <tr style="border-bottom:1px solid var(--border)">
+                        <td style="padding:12px 16px;overflow:hidden">
+                            <div style="font-weight:600;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${esc(s.name)}">${esc(s.name)}</div>
+                            <div style="font-size:10px;font-family:'Space Mono',monospace;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px" title="${esc(s.email)}">${esc(s.email)}</div>
+                        </td>
+                        <td style="padding:12px 16px">
+                            <span class="chip chip-skip" style="font-size:11px;white-space:nowrap">${svc.label}</span>
+                        </td>
+                        <td style="padding:12px 16px;overflow:hidden">
+                            <div style="font-size:11px;font-family:'Space Mono',monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${esc(s.api_host||'')}">${esc(s.api_host||'')}</div>
+                            <div style="font-size:10px;font-family:'Space Mono',monospace;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px" title="${esc(s.api_endpoint||'')}">${esc(s.api_endpoint||'')}</div>
+                        </td>
+                        <td style="padding:12px 16px"><span class="chip chip-skip" style="font-size:10px;white-space:nowrap">${esc(s.api_auth_type||'')}</span></td>
+                        <td style="padding:12px 16px"><span class="chip ${s.is_active?'chip-on':'chip-off'}">${s.is_active?'Aktif':'Pasif'}</span></td>
+                        <td style="padding:12px 16px;white-space:nowrap;text-align:right">
+                            <button class="btn btn-outline btn-sm" onclick="testApi(${s.id})" title="Bağlantı test et">🔌</button>
+                            <button class="btn btn-outline btn-sm" onclick="editApi(${s.id})" title="Düzenle">✏</button>
+                            <button class="btn btn-danger btn-sm" onclick="delApi(${s.id})" title="Sil">🗑</button>
+                        </td>
+                    </tr>`;}).join('')}
+                </tbody>
+            </table>
+        </div>`;
+    } catch(e) { console.error(e); }
+}
+
+/* ── Düzenle ────────────────────────────────────────────────────────── */
+async function editApi(id) {
+    const d = await (await fetch('/api/senders')).json();
+    const s = (d.data||[]).find(x => x.id === id);
+    if (!s) return;
+    _editApiId = id;
+
+    document.getElementById('api-name').value     = s.name     || '';
+    document.getElementById('api-email').value    = s.email    || '';
+    document.getElementById('api-host').value     = s.api_host || '';
+    document.getElementById('api-endpoint').value = s.api_endpoint || '';
+    document.getElementById('api-method').value   = s.api_method  || 'POST';
+    document.getElementById('api-token').value    = '';
+    document.getElementById('api-token').placeholder = 'Kayıtlı (boş = değiştirme)';
+
+    const knownTypes = ['X-AUTH-TOKEN','Bearer','Token','api-key','apikey','X-API-KEY'];
+    const at = s.api_auth_type || 'X-AUTH-TOKEN';
+    if (knownTypes.includes(at)) {
+        document.getElementById('api-auth-type').value = at;
+        document.getElementById('auth-custom-wrap').style.display = 'none';
+    } else {
+        document.getElementById('api-auth-type').value = 'custom';
+        document.getElementById('api-auth-custom').value = at;
+        document.getElementById('auth-custom-wrap').style.display = 'block';
+    }
+
+    const tpl = s.api_payload_tpl;
+    if (tpl) {
+        document.getElementById('api-payload').value =
+            typeof tpl === 'object' ? JSON.stringify(tpl, null, 2) : tpl;
+        validatePayloadJson(document.getElementById('api-payload'));
+    }
+
+    document.getElementById('api-form-title').textContent = '✏ Düzenle: ' + s.name;
+    document.getElementById('api-cancel-btn').style.display = 'inline-flex';
+    document.getElementById('api-btn-txt').textContent = '💾 Güncelle';
+    hideAlert('api-alert');
+    document.querySelector('.card:last-child').scrollIntoView({behavior:'smooth'});
+}
+
+function cancelApi() {
+    _editApiId = null;
+    ['api-name','api-email','api-host','api-endpoint','api-token','api-auth-custom'].forEach(id => {
+        const el = document.getElementById(id); if (el) el.value = '';
+    });
+    document.getElementById('api-token').placeholder = '••••••••';
+    document.getElementById('api-auth-type').value = 'X-AUTH-TOKEN';
+    document.getElementById('api-method').value = 'POST';
+    document.getElementById('auth-custom-wrap').style.display = 'none';
+    loadPreset('mailrelay');
+    document.getElementById('api-form-title').textContent = 'Yeni API Gönderici';
+    document.getElementById('api-cancel-btn').style.display = 'none';
+    document.getElementById('api-btn-txt').textContent = '💾 Kaydet';
+    hideAlert('api-alert');
+}
+
+/* ── Kaydet ─────────────────────────────────────────────────────────── */
+async function saveApi() {
+    const sp   = document.getElementById('api-sp');
+    const btxt = document.getElementById('api-btn-txt');
+    sp.style.display = 'block';
+    btxt.textContent = 'Kaydediliyor...';
+    hideAlert('api-alert');
+
+    const payloadEl = document.getElementById('api-payload');
+    if (!validatePayloadJson(payloadEl)) {
+        showAlert('api-alert', 'Payload template geçerli bir JSON değil.', 'err');
+        sp.style.display = 'none'; btxt.textContent = '💾 Kaydet'; return;
+    }
+
+    let authType = document.getElementById('api-auth-type').value;
+    if (authType === 'custom') {
+        authType = (document.getElementById('api-auth-custom').value || '').trim();
+        if (!authType) {
+            showAlert('api-alert', 'Özel header adı boş bırakılamaz.', 'err');
+            sp.style.display = 'none'; btxt.textContent = '💾 Kaydet'; return;
+        }
+    }
+
+    const p = {
+        name:            document.getElementById('api-name').value.trim(),
+        email:           document.getElementById('api-email').value.trim(),
+        sender_mode:     'api',
+        api_host:        document.getElementById('api-host').value.trim(),
+        api_endpoint:    document.getElementById('api-endpoint').value.trim(),
+        api_auth_type:   authType,
+        api_auth_token:  document.getElementById('api-token').value,
+        api_method:      document.getElementById('api-method').value,
+        api_payload_tpl: JSON.parse(payloadEl.value),
+        is_active:       1,
+    };
+
+    if (!p.name || !p.email || !p.api_host || !p.api_endpoint) {
+        showAlert('api-alert', 'Ad, e-posta, host ve endpoint zorunludur.', 'err');
+        sp.style.display = 'none'; btxt.textContent = '💾 Kaydet'; return;
+    }
+    if (!_editApiId && !p.api_auth_token) {
+        showAlert('api-alert', 'Yeni ekleme için auth token zorunludur.', 'err');
+        sp.style.display = 'none'; btxt.textContent = '💾 Kaydet'; return;
+    }
+
+    const url = _editApiId ? `/api/senders/${_editApiId}` : '/api/senders';
+    try {
+        const d = await (await fetch(url, {
+            method: _editApiId ? 'PUT' : 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(p)
+        })).json();
+        showAlert('api-alert', d.message, d.success ? 'ok' : 'err');
+        if (d.success) { cancelApi(); loadApiList(); }
+    } catch(e) {
+        showAlert('api-alert', 'Bağlantı hatası: ' + e.message, 'err');
+    } finally {
+        sp.style.display = 'none';
+        btxt.textContent = _editApiId ? '💾 Güncelle' : '💾 Kaydet';
+    }
+}
+
+async function testApi(id) {
+    showAlert('api-alert', '⏳ API sunucusuna bağlantı test ediliyor...', 'ok');
+    try {
+        const d = await (await fetch(`/api/senders/${id}/test`, {method:'POST'})).json();
+        showAlert('api-alert', (d.success ? '✅ ' : '❌ ') + d.message, d.success ? 'ok' : 'err');
+    } catch(e) { showAlert('api-alert', 'Test hatası: ' + e.message, 'err'); }
+}
+
+async function delApi(id) {
+    if (!confirm('Bu göndericiye ait tüm loglar da silinecek. Emin misiniz?')) return;
+    const d = await (await fetch(`/api/senders/${id}`, {method:'DELETE'})).json();
+    if (d.success) loadApiList(); else alert(d.message);
+}
+</script>
+
+{% endblock %}
+

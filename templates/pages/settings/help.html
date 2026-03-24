@@ -1,0 +1,165 @@
+{% extends "pages/settings/base.html" %}
+{% set active_tab = 'help' %}
+{% block title %}Kullanım Kılavuzu{% endblock %}
+{% block subtitle %}Tüm özellikler hakkında detaylı açıklamalar{% endblock %}
+
+{% block settings_content %}
+
+<!-- ── Arama ────────────────────────────────────────────────────── -->
+<div class="card" style="padding:16px 20px">
+    <div style="position:relative">
+        <span style="position:absolute;left:12px;top:50%;transform:translateY(-50%);
+                     font-size:16px;pointer-events:none">🔍</span>
+        <input id="help-search"
+               placeholder="Soru veya konu arayın… (örn: gmail, cron, bounce)"
+               oninput="filterHelp(this.value)"
+               style="width:100%;padding:10px 14px 10px 38px;background:var(--s2);
+                      border:1px solid var(--border);border-radius:10px;
+                      color:var(--text);font-size:14px;box-sizing:border-box">
+    </div>
+    <div id="help-no-result" style="display:none;text-align:center;padding:16px 0;
+         color:var(--muted);font-size:13px">
+        Sonuç bulunamadı. Farklı bir kelime deneyin.
+    </div>
+</div>
+
+<!-- ── Hızlı Kısayollar ─────────────────────────────────────────── -->
+<div id="help-shortcuts" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:4px">
+    {% for section in guide %}
+    <button onclick="scrollToSection('{{ section.id }}')"
+            style="padding:6px 14px;background:var(--s2);border:1px solid var(--border);
+                   border-radius:20px;color:var(--muted);font-size:12px;cursor:pointer;
+                   transition:all .15s;white-space:nowrap">
+        {{ section.icon }} {{ section.title }}
+    </button>
+    {% endfor %}
+</div>
+
+<!-- ── Bölümler ─────────────────────────────────────────────────── -->
+{% for section in guide %}
+<div class="card help-section" id="section-{{ section.id }}" data-section="{{ section.title }}">
+    <div class="card-title">{{ section.icon }} {{ section.title }}</div>
+
+    <div style="display:flex;flex-direction:column;gap:0">
+        {% for item in section.questions %}
+        <div class="help-item" data-q="{{ item.q|lower }}" data-a="{{ item.a|lower }}"
+             style="border-bottom:1px solid var(--border);last-child:border-bottom:none">
+            <button onclick="toggleAnswer(this)"
+                    style="width:100%;text-align:left;background:none;border:none;
+                           padding:14px 0;color:var(--text);cursor:pointer;
+                           display:flex;align-items:center;justify-content:space-between;gap:12px">
+                <span style="font-size:13px;font-weight:600;line-height:1.4">{{ item.q }}</span>
+                <span class="help-chevron"
+                      style="color:var(--muted);font-size:11px;flex-shrink:0;
+                             transition:transform .2s">▼</span>
+            </button>
+            <div class="help-answer" style="display:none;padding:0 0 16px">
+                {% set lines = item.a.split('\n') %}
+                {% for line in lines %}
+                    {% set ls = line.strip() %}
+                    {% if ls == '' %}
+                        <div style="height:6px"></div>
+                    {% elif ls.startswith('══') or ls.startswith('──') %}
+                        <div style="border-top:1px solid var(--border);margin:10px 0 8px"></div>
+                    {% elif ls.startswith('•') %}
+                        <div style="display:flex;gap:8px;font-size:13px;color:var(--muted);line-height:1.6;padding:2px 0 2px 4px">
+                            <span style="color:var(--accent);flex-shrink:0">•</span>
+                            <span>{{ ls[1:]|trim }}</span>
+                        </div>
+                    {% elif ls.startswith('→') %}
+                        <div style="display:flex;gap:8px;font-size:13px;line-height:1.6;padding:4px 0 4px 4px">
+                            <span style="color:var(--ok);flex-shrink:0;font-weight:600">→</span>
+                            <span style="color:var(--text);font-weight:500">{{ ls[1:]|trim }}</span>
+                        </div>
+                    {% elif ls.startswith('⚡') or ls.startswith('🔍') or ls.startswith('🔬') or ls.startswith('1.') or ls.startswith('2.') or ls.startswith('3.') or ls.startswith('4.') or ls.startswith('5.') or ls.startswith('6.') or ls.startswith('7.') or ls.startswith('8.') or ls.startswith('9.') %}
+                        <div style="font-size:13px;font-weight:600;color:var(--text);margin:10px 0 4px;line-height:1.5">{{ ls }}</div>
+                    {% elif ls and ls == ls.upper() and ls|length > 3 and ':' not in ls %}
+                        <div style="font-size:11px;font-weight:600;color:var(--muted);letter-spacing:.05em;margin:10px 0 4px;text-transform:uppercase">{{ ls }}</div>
+                    {% elif line.startswith('   ') or line.startswith('	') %}
+                        <div style="font-size:12px;color:var(--muted);line-height:1.6;padding:1px 0 1px 20px;font-family:monospace">{{ ls }}</div>
+                    {% else %}
+                        <div style="font-size:13px;color:var(--muted);line-height:1.6;padding:1px 0">{{ ls }}</div>
+                    {% endif %}
+                {% endfor %}
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endfor %}
+
+<!-- ── Boş sayfa footer ──────────────────────────────────────────── -->
+<div style="text-align:center;padding:12px;color:var(--muted);font-size:12px">
+    Bulamadığınız bir şey mi var? Ayarlar sayfalarındaki
+    <span style="display:inline-flex;align-items:center;justify-content:center;
+                 width:20px;height:20px;border-radius:50%;background:var(--accent);
+                 color:#fff;font-size:11px;font-weight:700">?</span>
+    butonlarına tıklayarak sayfa özelinde yardım alabilirsiniz.
+</div>
+
+
+<script>
+// ── Accordion ─────────────────────────────────────────────────────
+function toggleAnswer(btn) {
+    const answer  = btn.nextElementSibling;
+    const chevron = btn.querySelector('.help-chevron');
+    const isOpen  = answer.style.display !== 'none';
+    answer.style.display  = isOpen ? 'none' : 'block';
+    chevron.style.transform = isOpen ? '' : 'rotate(180deg)';
+}
+
+// ── Arama ─────────────────────────────────────────────────────────
+function filterHelp(query) {
+    query = query.trim().toLowerCase();
+    const sections   = document.querySelectorAll('.help-section');
+    const shortcuts  = document.getElementById('help-shortcuts');
+    const noResult   = document.getElementById('help-no-result');
+    let totalVisible = 0;
+
+    shortcuts.style.display = query ? 'none' : '';
+
+    sections.forEach(sec => {
+        const items    = sec.querySelectorAll('.help-item');
+        let secVisible = 0;
+
+        items.forEach(item => {
+            const match = !query
+                || item.dataset.q.includes(query)
+                || item.dataset.a.includes(query)
+                || sec.dataset.section.toLowerCase().includes(query);
+
+            item.style.display = match ? '' : 'none';
+            if (match) {
+                secVisible++;
+                // Arama varken cevabı otomatik aç
+                if (query) {
+                    const answer  = item.querySelector('.help-answer');
+                    const chevron = item.querySelector('.help-chevron');
+                    if (answer)  answer.style.display    = 'block';
+                    if (chevron) chevron.style.transform = 'rotate(180deg)';
+                }
+            }
+        });
+
+        sec.style.display = secVisible > 0 ? '' : 'none';
+        totalVisible += secVisible;
+    });
+
+    noResult.style.display = (query && totalVisible === 0) ? '' : 'none';
+}
+
+// ── Scroll ────────────────────────────────────────────────────────
+function scrollToSection(id) {
+    const el = document.getElementById('section-' + id);
+    if (el) el.scrollIntoView({behavior:'smooth', block:'start'});
+}
+
+// ── URL hash desteği (? butonundan doğrudan bölüme atlama) ────────
+document.addEventListener('DOMContentLoaded', () => {
+    const hash = location.hash.replace('#','');
+    if (hash) scrollToSection(hash);
+});
+</script>
+
+{% endblock %}
+

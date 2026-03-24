@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1.0">
+    <title>Abonelikten Çık - MailSender Pro</title>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg: #07070d;
+            --s1: #0f0f18;
+            --border: rgba(130,130,220,0.1);
+            --accent: #7c6ffd;
+            --text: #e2e2f0;
+            --muted: #6b6b8a;
+            --ok: #4ade80;
+            --err: #f87171;
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: 'DM Sans', sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .card {
+            background: var(--s1);
+            border: 1px solid var(--border);
+            border-radius: 24px;
+            padding: 48px 40px;
+            max-width: 480px;
+            width: 100%;
+            text-align: center;
+        }
+        .icon { font-size: 52px; margin-bottom: 18px; }
+        h1 { font-size: 24px; font-weight: 600; margin-bottom: 12px; }
+        p { color: var(--muted); line-height: 1.6; margin-bottom: 10px; }
+        .email-badge {
+            display: inline-block;
+            background: rgba(124,111,253,0.12);
+            border: 1px solid rgba(124,111,253,0.25);
+            padding: 7px 18px;
+            border-radius: 99px;
+            color: var(--accent);
+            font-weight: 600;
+            font-size: 14px;
+            margin: 14px 0 28px;
+            word-break: break-all;
+        }
+        .btn {
+            display: inline-block;
+            background: linear-gradient(135deg, var(--accent), #f472b6);
+            color: white;
+            border: none;
+            padding: 14px 32px;
+            border-radius: 12px;
+            font-size: 15px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: opacity 0.2s;
+            width: 100%;
+        }
+        .btn:hover { opacity: 0.88; }
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        .btn-outline {
+            background: transparent;
+            border: 1px solid var(--border);
+            color: var(--muted);
+            margin-top: 10px;
+            font-size: 13px;
+            padding: 10px 24px;
+        }
+        .hidden { display: none; }
+        .ok-color { color: var(--ok); }
+        .err-color { color: var(--err); }
+        .spinner {
+            display: inline-block;
+            width: 18px; height: 18px;
+            border: 2px solid rgba(255,255,255,0.3);
+            border-top-color: #fff;
+            border-radius: 50%;
+            animation: spin 0.7s linear infinite;
+            vertical-align: middle;
+            margin-right: 8px;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+    </style>
+</head>
+<body>
+<div class="card">
+
+    <!-- Yükleniyor -->
+    <div id="pane-loading">
+        <div class="icon">⏳</div>
+        <h1>Doğrulanıyor...</h1>
+        <p>Link kontrol ediliyor, lütfen bekleyin.</p>
+    </div>
+
+    <!-- Onay ekranı -->
+    <div id="pane-confirm" class="hidden">
+        <div class="icon">📧</div>
+        <h1>Abonelikten Çık</h1>
+        <p>Aşağıdaki e-posta adresine artık mail gönderilmeyecek:</p>
+        <div class="email-badge" id="email-display"></div>
+        <button class="btn" id="confirm-btn" onclick="doUnsubscribe()">
+            Evet, aboneliğimi sonlandır
+        </button>
+        <br>
+        <button class="btn btn-outline" onclick="window.close()">Vazgeç</button>
+    </div>
+
+    <!-- Başarı -->
+    <div id="pane-success" class="hidden">
+        <div class="icon ok-color">✓</div>
+        <h1>İşlem Tamamlandı</h1>
+        <p><strong id="success-email"></strong> adresine artık e-posta gönderilmeyecek.</p>
+        <p style="margin-top:10px;font-size:13px">Bu pencereyi kapatabilirsiniz.</p>
+    </div>
+
+    <!-- Hata -->
+    <div id="pane-error" class="hidden">
+        <div class="icon err-color">✗</div>
+        <h1>Geçersiz Link</h1>
+        <p id="error-msg">Bu abonelik linki geçersiz veya daha önce kullanılmış.</p>
+        <p style="margin-top:14px;font-size:13px">Yeni bir link almak için gönderilen e-postadaki bağlantıyı kullanın.</p>
+    </div>
+
+</div>
+
+<script>
+    const token = '{{ token }}';
+
+    function show(id) {
+        ['pane-loading','pane-confirm','pane-success','pane-error'].forEach(p => {
+            document.getElementById(p).classList.add('hidden');
+        });
+        document.getElementById(id).classList.remove('hidden');
+    }
+
+    // Sayfa açılınca token'ı doğrula (sadece varlığını kontrol et, henüz kullanma)
+    window.addEventListener('DOMContentLoaded', () => {
+        if (!token || token === 'None' || token.trim() === '') {
+            show('pane-error');
+            document.getElementById('error-msg').textContent = 'Link eksik veya hatalı.';
+            return;
+        }
+        // Token var → onay ekranını göster (doğrulama unsubscribe sırasında yapılır)
+        show('pane-confirm');
+        document.getElementById('email-display').textContent = 'Yükleniyor...';
+
+        // Token'a ait e-posta adresini göstermek için önizleme isteği
+        fetch('/api/unsubscribe-preview', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({token: token})
+        })
+        .then(r => r.json())
+        .then(d => {
+            if (d.email) {
+                document.getElementById('email-display').textContent = d.email;
+            } else {
+                show('pane-error');
+                document.getElementById('error-msg').textContent = d.message || 'Geçersiz veya süresi dolmuş link.';
+            }
+        })
+        .catch(() => {
+            document.getElementById('email-display').textContent = '(e-posta yüklenemedi)';
+        });
+    });
+
+    async function doUnsubscribe() {
+        const btn = document.getElementById('confirm-btn');
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner"></span>İşleniyor...';
+
+        try {
+            const res = await fetch('/api/unsubscribe', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({token: token})
+            });
+            const d = await res.json();
+
+            if (d.success) {
+                document.getElementById('success-email').textContent = d.email || '';
+                show('pane-success');
+            } else {
+                show('pane-error');
+                document.getElementById('error-msg').textContent = d.message;
+            }
+        } catch (e) {
+            show('pane-error');
+            document.getElementById('error-msg').textContent = 'Bağlantı hatası. Lütfen tekrar deneyin.';
+        }
+    }
+</script>
+</body>
+</html>

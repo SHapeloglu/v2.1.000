@@ -1,0 +1,13 @@
+DB_HOST='localhost'
+DB_PORT='3306'
+DB_USER='root'
+DB_PASSWORD='102030'
+DB_NAME='aws_mail_sender_pro_v2'
+SECRET_KEY='I3CnBPJtnW3Hwv0rJt4yLrccKJE3Ss87B9sKqbRYuiY='
+
+AWS_ACCESS_KEY_ID=
+AWS_SECRET_ACCESS_KEY=
+AWS_REGION=us-east-1
+UNSUB_APP_URL=https://unsub.bidanismanlik.com
+UNSUB_API_KEY=I3CnBPJtnW3Hwv0rJt4yLrccKJE3Ss87B9sKqbRYuiY
+

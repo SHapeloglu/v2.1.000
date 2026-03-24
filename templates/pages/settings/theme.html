@@ -1,0 +1,203 @@
+{% extends "pages/settings/base.html" %}
+{% set active_tab = 'theme' %}
+{% block title %}Tema Ayarları{% endblock %}
+{% block subtitle %}Arayüz renk temasını değiştirin{% endblock %}
+
+{% block settings_content %}
+<div class="card">
+    <div class="card-title">🎨 Tema Seç</div>
+    <p style="font-size:13px;color:var(--muted);margin-bottom:20px">
+        Seçtiğiniz tema hesabınıza kaydedilir. Farklı cihaz ve tarayıcılarda aynı tema uygulanır.
+    </p>
+
+    <!-- Hızlı seçim dropdown -->
+    <div class="field" style="max-width:320px;margin-bottom:24px">
+        <label>Aktif Tema</label>
+        <select id="theme-select" onchange="applyTheme(this.value)" style="font-size:14px">
+            <option value="charcoal">🌑 Charcoal Dark (varsayılan)</option>
+            <option value="black">⚫ Siyah (tam karanlık)</option>
+            <option value="lavender">💜 Digital Lavender</option>
+            <option value="mint">🌿 Neo Mint</option>
+            <option value="sage">🍃 Sage Green</option>
+            <option value="coral">🪸 Coral Warm</option>
+            <option value="teal">🌊 Deep Teal</option>
+        </select>
+    </div>
+
+    <!-- Tema kartları -->
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:16px">
+
+        <div class="theme-card" data-t="charcoal" onclick="applyTheme('charcoal')">
+            <div class="tc-preview" style="background:#07070d;border-color:rgba(130,130,220,0.2)">
+                <div class="tc-sidebar" style="background:#0f0f18"></div>
+                <div class="tc-content">
+                    <div class="tc-bar" style="background:#7c6ffd;width:60%"></div>
+                    <div class="tc-bar" style="background:rgba(130,130,220,0.2);width:40%"></div>
+                    <div class="tc-bar" style="background:rgba(130,130,220,0.2);width:80%"></div>
+                </div>
+            </div>
+            <div class="tc-info">
+                <strong>Charcoal Dark</strong>
+                <span>Koyu gri · varsayılan</span>
+            </div>
+        </div>
+
+        <div class="theme-card" data-t="black" onclick="applyTheme('black')">
+            <div class="tc-preview" style="background:#000;border-color:rgba(255,255,255,0.08)">
+                <div class="tc-sidebar" style="background:#111"></div>
+                <div class="tc-content">
+                    <div class="tc-bar" style="background:#FF6B6B;width:60%"></div>
+                    <div class="tc-bar" style="background:rgba(255,255,255,0.1);width:40%"></div>
+                    <div class="tc-bar" style="background:rgba(255,255,255,0.1);width:80%"></div>
+                </div>
+            </div>
+            <div class="tc-info">
+                <strong>Siyah</strong>
+                <span>Tam karanlık · #1A1A1A</span>
+            </div>
+        </div>
+
+        <div class="theme-card" data-t="lavender" onclick="applyTheme('lavender')">
+            <div class="tc-preview" style="background:#F0EEE9;border-color:rgba(100,80,160,0.2)">
+                <div class="tc-sidebar" style="background:#ffffff;border-right:1px solid rgba(100,80,160,0.15)"></div>
+                <div class="tc-content">
+                    <div class="tc-bar" style="background:#7B5EA7;width:60%"></div>
+                    <div class="tc-bar" style="background:rgba(100,80,160,0.15);width:40%"></div>
+                    <div class="tc-bar" style="background:#E6E6FA;width:80%"></div>
+                </div>
+            </div>
+            <div class="tc-info">
+                <strong>Digital Lavender</strong>
+                <span>Açık · #E6E6FA · 2026 trend</span>
+            </div>
+        </div>
+
+        <div class="theme-card" data-t="mint" onclick="applyTheme('mint')">
+            <div class="tc-preview" style="background:#F0FBF6;border-color:rgba(0,120,80,0.15)">
+                <div class="tc-sidebar" style="background:#ffffff;border-right:1px solid rgba(0,120,80,0.15)"></div>
+                <div class="tc-content">
+                    <div class="tc-bar" style="background:#008060;width:60%"></div>
+                    <div class="tc-bar" style="background:rgba(0,120,80,0.12);width:40%"></div>
+                    <div class="tc-bar" style="background:#AAF0D1;width:80%"></div>
+                </div>
+            </div>
+            <div class="tc-info">
+                <strong>Neo Mint</strong>
+                <span>Açık · #AAF0D1 · ferah</span>
+            </div>
+        </div>
+
+        <div class="theme-card" data-t="sage" onclick="applyTheme('sage')">
+            <div class="tc-preview" style="background:#F4F7F0;border-color:rgba(80,110,60,0.15)">
+                <div class="tc-sidebar" style="background:#ffffff;border-right:1px solid rgba(80,110,60,0.15)"></div>
+                <div class="tc-content">
+                    <div class="tc-bar" style="background:#5A7A42;width:60%"></div>
+                    <div class="tc-bar" style="background:rgba(80,110,60,0.12);width:40%"></div>
+                    <div class="tc-bar" style="background:#9DC183;width:80%"></div>
+                </div>
+            </div>
+            <div class="tc-info">
+                <strong>Sage Green</strong>
+                <span>Açık · #9DC183 · doğal</span>
+            </div>
+        </div>
+
+        <div class="theme-card" data-t="coral" onclick="applyTheme('coral')">
+            <div class="tc-preview" style="background:#FFF8F5;border-color:rgba(200,80,60,0.15)">
+                <div class="tc-sidebar" style="background:#ffffff;border-right:1px solid rgba(200,80,60,0.15)"></div>
+                <div class="tc-content">
+                    <div class="tc-bar" style="background:#FF6B6B;width:60%"></div>
+                    <div class="tc-bar" style="background:rgba(200,80,60,0.1);width:40%"></div>
+                    <div class="tc-bar" style="background:#FFDAB9;width:80%"></div>
+                </div>
+            </div>
+            <div class="tc-info">
+                <strong>Coral Warm</strong>
+                <span>Açık · #FF6B6B · enerjik</span>
+            </div>
+        </div>
+
+        <div class="theme-card" data-t="teal" onclick="applyTheme('teal')">
+            <div class="tc-preview" style="background:#F0F7F7;border-color:rgba(0,100,100,0.15)">
+                <div class="tc-sidebar" style="background:#ffffff;border-right:1px solid rgba(0,100,100,0.15)"></div>
+                <div class="tc-content">
+                    <div class="tc-bar" style="background:#008080;width:60%"></div>
+                    <div class="tc-bar" style="background:rgba(0,100,100,0.12);width:40%"></div>
+                    <div class="tc-bar" style="background:#AAD8D8;width:80%"></div>
+                </div>
+            </div>
+            <div class="tc-info">
+                <strong>Deep Teal</strong>
+                <span>Açık · #008080 · profesyonel</span>
+            </div>
+        </div>
+
+    </div>
+</div>
+
+<style>
+.theme-card {
+    cursor: pointer;
+    border-radius: var(--r);
+    border: 2px solid var(--border);
+    overflow: hidden;
+    transition: all .2s;
+}
+.theme-card:hover { border-color: var(--accent); transform: translateY(-2px); }
+.theme-card.active { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(124,111,253,.2); }
+.tc-preview {
+    height: 90px;
+    display: flex;
+    border-bottom: 1px solid rgba(0,0,0,.08);
+    overflow: hidden;
+}
+.tc-sidebar { width: 30px; flex-shrink: 0; }
+.tc-content { flex: 1; padding: 10px; display: flex; flex-direction: column; gap: 6px; justify-content: center; }
+.tc-bar { height: 6px; border-radius: 99px; }
+.tc-info { padding: 10px 12px; }
+.tc-info strong { display: block; font-size: 13px; color: var(--text); margin-bottom: 2px; }
+.tc-info span { font-size: 11px; color: var(--muted); }
+</style>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // Aktif temayı <html data-theme> attribute'undan oku (sunucudan geldi)
+    const current = document.documentElement.getAttribute('data-theme') || 'charcoal';
+    document.getElementById('theme-select').value = current;
+    updateActiveCard(current);
+});
+
+async function applyTheme(theme) {
+    // Anlık önizleme için DOM'a hemen uygula
+    document.documentElement.setAttribute('data-theme', theme);
+    document.getElementById('theme-select').value = theme;
+    updateActiveCard(theme);
+
+    // DB'ye kaydet
+    try {
+        const res = await fetch('/api/me/theme', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({theme})
+        });
+        const d = await res.json();
+        if (!d.success) {
+            console.warn('Tema kaydedilemedi:', d.message);
+        } else {
+            // localStorage'ı da güncelle (sonraki FOUC önleme için)
+            try { localStorage.setItem('msp_theme', theme); } catch(e) {}
+        }
+    } catch(e) {
+        console.warn('Tema kayıt hatası:', e);
+    }
+}
+
+function updateActiveCard(theme) {
+    document.querySelectorAll('.theme-card').forEach(c => {
+        c.classList.toggle('active', c.dataset.t === theme);
+    });
+}
+</script>
+
+{% endblock %}
+

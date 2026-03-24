@@ -1,0 +1,240 @@
+{% extends "pages/settings/base.html" %}
+{% set active_tab = 'users' %}
+{% block title %}Kullanıcı Yönetimi{% endblock %}
+{% block subtitle %}Uygulama kullanıcılarını ekle, düzenle, sil{% endblock %}
+
+{% block settings_content %}
+<!-- Kullanıcı Listesi -->
+<div class="card">
+    <div class="card-title" style="display:flex;align-items:center;justify-content:space-between">
+        <span>👥 Kullanıcılar</span>
+        <button class="btn btn-primary btn-sm" onclick="showAddUser()">+ Kullanıcı Ekle</button>
+    </div>
+    <div style="overflow-x:auto">
+        <table style="width:100%;border-collapse:collapse;font-size:13px">
+            <thead>
+                <tr style="border-bottom:1px solid var(--border)">
+                    <th style="text-align:left;padding:8px 10px;color:var(--muted);font-weight:500">Kullanıcı Adı</th>
+                    <th style="text-align:left;padding:8px 10px;color:var(--muted);font-weight:500">E-posta</th>
+                    <th style="text-align:left;padding:8px 10px;color:var(--muted);font-weight:500">Rol</th>
+                    <th style="text-align:left;padding:8px 10px;color:var(--muted);font-weight:500">Durum</th>
+                    <th style="text-align:left;padding:8px 10px;color:var(--muted);font-weight:500">Son Giriş</th>
+                    <th style="padding:8px 10px"></th>
+                </tr>
+            </thead>
+            <tbody id="users-tbody">
+                <tr><td colspan="6" style="text-align:center;color:var(--muted);padding:20px">Yükleniyor...</td></tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Ekle/Düzenle Formu -->
+<div class="card" id="user-form-card" style="display:none">
+    <div class="card-title" id="user-form-title">Kullanıcı Ekle</div>
+    <input type="hidden" id="uf-id">
+    <div class="fg">
+        <div class="g2">
+            <div class="field"><label>Kullanıcı Adı <span style="color:var(--err)">*</span></label>
+                <input id="uf-username" placeholder="kullanici_adi"></div>
+            <div class="field"><label>E-posta</label>
+                <input id="uf-email" type="email" placeholder="ornek@email.com"></div>
+        </div>
+        <div class="g2">
+            <div class="field"><label>Şifre <span id="uf-pw-note" style="color:var(--muted);font-size:10px">(boş bırakırsanız değişmez)</span></label>
+                <div class="pw-wrap">
+                    <input type="password" id="uf-password" placeholder="••••••••">
+                    <button class="pw-eye" onclick="togglePw('uf-password',this)" type="button">👁</button>
+                </div>
+            </div>
+            <div class="field"><label>Rol</label>
+                <select id="uf-role">
+                    <option value="editor">Editor</option>
+                    <option value="admin">Admin</option>
+                </select>
+            </div>
+        </div>
+        <div class="field" id="uf-active-wrap" style="display:none">
+            <label>Durum</label>
+            <select id="uf-active">
+                <option value="1">Aktif</option>
+                <option value="0">Pasif</option>
+            </select>
+        </div>
+    </div>
+    <div class="alert" id="uf-alert"></div>
+    <div class="btn-row">
+        <button class="btn btn-primary" onclick="saveUser()">
+            <div class="sp" id="uf-sp"></div><span id="uf-save-txt">💾 Kaydet</span>
+        </button>
+        <button class="btn btn-outline" onclick="cancelUserForm()">İptal</button>
+    </div>
+</div>
+
+<!-- Şifre Değiştir (kendi hesabım) -->
+<div class="card">
+    <div class="card-title">🔑 Kendi Şifremi Değiştir</div>
+    <div class="fg">
+        <div class="g3">
+            <div class="field"><label>Mevcut Şifre</label>
+                <div class="pw-wrap">
+                    <input type="password" id="cp-old" placeholder="••••••••">
+                    <button class="pw-eye" onclick="togglePw('cp-old',this)" type="button">👁</button>
+                </div>
+            </div>
+            <div class="field"><label>Yeni Şifre</label>
+                <div class="pw-wrap">
+                    <input type="password" id="cp-new" placeholder="••••••••">
+                    <button class="pw-eye" onclick="togglePw('cp-new',this)" type="button">👁</button>
+                </div>
+            </div>
+            <div class="field"><label>Yeni Şifre (Tekrar)</label>
+                <div class="pw-wrap">
+                    <input type="password" id="cp-confirm" placeholder="••••••••">
+                    <button class="pw-eye" onclick="togglePw('cp-confirm',this)" type="button">👁</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="alert" id="cp-alert"></div>
+    <div class="btn-row">
+        <button class="btn btn-primary" onclick="changeMyPassword()">
+            <div class="sp" id="cp-sp"></div><span id="cp-txt">🔑 Şifremi Güncelle</span>
+        </button>
+    </div>
+</div>
+
+<script>
+const ROLE_LABELS = {
+    admin:  '<span class="chip chip-ok">👑 Admin</span>',
+    editor: '<span class="chip chip-off">✏️ Editor</span>',
+};
+
+document.addEventListener('DOMContentLoaded', loadUsers);
+
+async function loadUsers() {
+    const tbody = document.getElementById('users-tbody');
+    try {
+        const d = await (await fetch('/api/users')).json();
+        if (!d.success || !d.data.length) {
+            tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:20px">Kullanıcı bulunamadı.</td></tr>';
+            return;
+        }
+        tbody.innerHTML = d.data.map(u => `
+        <tr style="border-bottom:1px solid var(--border)">
+            <td style="padding:9px 10px;font-weight:500">${esc(u.username)}</td>
+            <td style="padding:9px 10px;font-size:12px;color:var(--muted)">${esc(u.email||'—')}</td>
+            <td style="padding:9px 10px">${ROLE_LABELS[u.role]||u.role}</td>
+            <td style="padding:9px 10px">${u.is_active
+                ? '<span class="chip chip-ok">● Aktif</span>'
+                : '<span class="chip chip-err">● Pasif</span>'}</td>
+            <td style="padding:9px 10px;font-size:11px;color:var(--muted)">${u.last_login ? u.last_login.replace('T',' ').slice(0,16) : '—'}</td>
+            <td style="padding:9px 10px;text-align:right;display:flex;gap:6px;justify-content:flex-end">
+                <button class="btn btn-outline btn-sm" onclick='editUser(${JSON.stringify(u)})'>✏️</button>
+                <button class="btn btn-danger btn-sm" onclick="deleteUser(${u.id},'${esc(u.username)}')">🗑</button>
+            </td>
+        </tr>`).join('');
+    } catch(e) { tbody.innerHTML = '<tr><td colspan="6" style="color:var(--err);padding:20px">Yüklenemedi.</td></tr>'; }
+}
+
+function showAddUser() {
+    document.getElementById('uf-id').value = '';
+    document.getElementById('uf-username').value = '';
+    document.getElementById('uf-email').value = '';
+    document.getElementById('uf-password').value = '';
+    document.getElementById('uf-role').value = 'editor';
+    document.getElementById('uf-pw-note').textContent = '(zorunlu)';
+    document.getElementById('uf-active-wrap').style.display = 'none';
+    document.getElementById('user-form-title').textContent = 'Kullanıcı Ekle';
+    document.getElementById('uf-username').disabled = false;
+    document.getElementById('uf-alert').style.display = 'none';
+    const card = document.getElementById('user-form-card');
+    card.style.display = 'block';
+    card.scrollIntoView({behavior:'smooth'});
+}
+
+function editUser(u) {
+    document.getElementById('uf-id').value = u.id;
+    document.getElementById('uf-username').value = u.username;
+    document.getElementById('uf-username').disabled = true;
+    document.getElementById('uf-email').value = u.email || '';
+    document.getElementById('uf-password').value = '';
+    document.getElementById('uf-role').value = u.role;
+    document.getElementById('uf-active').value = u.is_active ? '1' : '0';
+    document.getElementById('uf-pw-note').textContent = '(boş bırakırsanız değişmez)';
+    document.getElementById('uf-active-wrap').style.display = 'block';
+    document.getElementById('user-form-title').textContent = `Kullanıcı Düzenle — ${u.username}`;
+    document.getElementById('uf-alert').style.display = 'none';
+    const card = document.getElementById('user-form-card');
+    card.style.display = 'block';
+    card.scrollIntoView({behavior:'smooth'});
+}
+
+function cancelUserForm() {
+    document.getElementById('user-form-card').style.display = 'none';
+}
+
+async function saveUser() {
+    const uid = document.getElementById('uf-id').value;
+    const isEdit = !!uid;
+    const btn = document.getElementById('uf-save-txt'), sp = document.getElementById('uf-sp');
+    btn.textContent = 'Kaydediliyor...'; sp.style.display = 'block';
+    hideAlert('uf-alert');
+    const payload = {
+        username: document.getElementById('uf-username').value.trim(),
+        email:    document.getElementById('uf-email').value.trim(),
+        password: document.getElementById('uf-password').value,
+        role:     document.getElementById('uf-role').value,
+    };
+    if (isEdit) {
+        payload.uid = parseInt(uid);
+        payload.is_active = parseInt(document.getElementById('uf-active').value);
+    }
+    try {
+        const url  = isEdit ? '/api/users/update' : '/api/users/create';
+        const d = await (await fetch(url, {
+            method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload)
+        })).json();
+        if (d.success) {
+            cancelUserForm();
+            loadUsers();
+        } else {
+            showAlert('uf-alert', d.message, 'err');
+        }
+    } catch(e) { showAlert('uf-alert','Bağlantı hatası.','err'); }
+    finally { btn.textContent = '💾 Kaydet'; sp.style.display = 'none'; }
+}
+
+async function deleteUser(uid, username) {
+    if (!confirm(`"${username}" kullanıcısı silinsin mi?`)) return;
+    const d = await (await fetch('/api/users/delete', {
+        method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({uid})
+    })).json();
+    if (d.success) loadUsers();
+    else alert('Silinemedi: ' + d.message);
+}
+
+async function changeMyPassword() {
+    const oldpw   = document.getElementById('cp-old').value;
+    const newpw   = document.getElementById('cp-new').value;
+    const confirm = document.getElementById('cp-confirm').value;
+    hideAlert('cp-alert');
+    if (!oldpw || !newpw) { showAlert('cp-alert','Tüm alanları doldurun.','err'); return; }
+    if (newpw !== confirm) { showAlert('cp-alert','Yeni şifreler eşleşmiyor.','err'); return; }
+    if (newpw.length < 6)  { showAlert('cp-alert','Şifre en az 6 karakter olmalı.','err'); return; }
+    const btn = document.getElementById('cp-txt'), sp = document.getElementById('cp-sp');
+    btn.textContent = 'Güncelleniyor...'; sp.style.display = 'block';
+    try {
+        const d = await (await fetch('/api/users/change-password', {
+            method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({old_password: oldpw, new_password: newpw})
+        })).json();
+        showAlert('cp-alert', (d.success?'✅ ':'❌ ') + d.message, d.success?'ok':'err');
+        if (d.success) { document.getElementById('cp-old').value=''; document.getElementById('cp-new').value=''; document.getElementById('cp-confirm').value=''; }
+    } catch(e) { showAlert('cp-alert','Bağlantı hatası.','err'); }
+    finally { btn.textContent = '🔑 Şifremi Güncelle'; sp.style.display = 'none'; }
+}
+</script>
+
+{% endblock %}
+

@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-header">
+    <h1>⚙ Ayarlar</h1>
+    <p>{% block subtitle %}{% endblock %}</p>
+</div>
+
+<!-- Settings Sub-Nav: 6 item -->
+<nav style="display:grid;grid-template-columns:repeat(6,1fr);gap:4px;margin-bottom:28px;background:var(--s1);border:1px solid var(--border);border-radius:var(--r2);padding:5px">
+    <a href="/settings/senders/smtp"     class="snav-btn {% if active_tab=='smtp' %}active{% endif %}">📡 SMTP</a>
+    <a href="/settings/senders/ses"      class="snav-btn {% if active_tab=='ses' %}active{% endif %}">☁ AWS SES</a>
+    <a href="/settings/senders/api"      class="snav-btn {% if active_tab=='api' %}active{% endif %}">🔌 API</a>
+    <a href="/settings/rules"            class="snav-btn {% if active_tab=='rules' %}active{% endif %}">🛡 Kurallar</a>
+    <a href="/settings/db"               class="snav-btn {% if active_tab=='db' %}active{% endif %}">🗄 Veritabanı</a>
+    <a href="/settings/subscription"     class="snav-btn {% if active_tab=='subscription' %}active{% endif %}">📧 Abonelik</a>
+    <a href="/settings/templates"        class="snav-btn {% if active_tab=='templates' %}active{% endif %}">📝 Şablonlar</a>
+    <a href="/settings/theme"            class="snav-btn {% if active_tab=='theme' %}active{% endif %}">🎨 Tema</a>
+    <a href="/settings/verify"           class="snav-btn {% if active_tab=='verify' %}active{% endif %}">✅ Liste Temizleme</a>
+    {% if current_user.role == 'admin' %}
+    <a href="/settings/users"            class="snav-btn {% if active_tab=='users' %}active{% endif %}">👥 Kullanıcılar</a>
+    <a href="/settings/help"             class="snav-btn {% if active_tab=='help' %}active{% endif %}">📖 Kılavuz</a>
+    {% endif %}
+</nav>
+
+{% block settings_content %}{% endblock %}
+{% block scripts %}{% endblock %}
+{% endblock %}

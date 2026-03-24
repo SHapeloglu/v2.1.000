@@ -1,0 +1,296 @@
+{% extends "pages/settings/base.html" %}
+{% set active_tab = 'templates' %}
+{% block title %}Şablon Yönetimi{% endblock %}
+{% block subtitle %}Konu ve mesaj şablonlarını kaydet, düzenle, sil{% endblock %}
+
+{% block settings_content %}
+
+<!-- ── Şablon Listesi ─────────────────────────────────────────────── -->
+<div class="card">
+    <div class="card-title" style="display:flex;align-items:center;justify-content:space-between">
+        <span>📝 Kayıtlı Şablonlar</span>
+        <!-- Filtre sekmesi -->
+        <div style="display:flex;gap:6px">
+            <button class="btn btn-outline btn-sm tpl-filter active" data-type="" onclick="setFilter(this,'')">Tümü</button>
+            <button class="btn btn-outline btn-sm tpl-filter" data-type="subject" onclick="setFilter(this,'subject')">📌 Konular</button>
+            <button class="btn btn-outline btn-sm tpl-filter" data-type="body" onclick="setFilter(this,'body')">📄 Mesajlar</button>
+        </div>
+    </div>
+
+    <div id="tpl-list-wrap">
+        <div style="text-align:center;color:var(--muted);padding:20px">Yükleniyor...</div>
+    </div>
+</div>
+
+<!-- ── Yeni Şablon / Düzenleme Formu ─────────────────────────────── -->
+<div class="card" id="tpl-form-card">
+    <div class="card-title" id="tpl-form-title">➕ Yeni Şablon</div>
+
+    <!-- Gizli düzenleme ID'si -->
+    <input type="hidden" id="tpl-id">
+
+    <div class="fg">
+        <div class="g2">
+            <!-- Şablon tipi seçimi -->
+            <div class="field">
+                <label>Tür <span style="color:var(--err)">*</span></label>
+                <select id="tpl-type" onchange="onTplTypeChange()">
+                    <option value="subject">📌 Konu Şablonu</option>
+                    <option value="body">📄 Mesaj Şablonu</option>
+                </select>
+            </div>
+            <!-- Şablon adı -->
+            <div class="field">
+                <label>Şablon Adı <span style="color:var(--err)">*</span></label>
+                <input id="tpl-name" placeholder="örn: Mart Kampanyası Konusu">
+            </div>
+        </div>
+
+        <!-- Konu için tek satır input, mesaj için textarea -->
+        <div class="field" id="tpl-content-field">
+            <label id="tpl-content-label">İçerik <span style="color:var(--err)">*</span>
+                <span class="badge" style="margin-left:6px">{{DeğişkenAdı}} ile kişiselleştir</span>
+            </label>
+            <!-- Konu tipi için input -->
+            <input id="tpl-content-input" placeholder="Merhaba {{Ad}}, size özel teklifimiz!">
+            <!-- Mesaj tipi için textarea -->
+            <textarea id="tpl-content-textarea"
+                      placeholder="Sayın {{Ad}},&#10;&#10;Mesajınız burada..."
+                      style="min-height:200px;display:none"></textarea>
+        </div>
+    </div>
+
+    <div class="alert" id="tpl-alert"></div>
+
+    <div class="btn-row">
+        <button class="btn btn-primary" onclick="saveTpl()">
+            <div class="sp" id="tpl-sp"></div>
+            <span id="tpl-save-txt">💾 Kaydet</span>
+        </button>
+        <button class="btn btn-outline" onclick="resetTplForm()">↺ Temizle</button>
+    </div>
+</div>
+
+
+<script>
+/* ══════════════════════════════════════════════════════════════════
+   Şablon Yönetim Sayfası — JavaScript
+   ══════════════════════════════════════════════════════════════════ */
+
+/* Aktif filtre tipi ('', 'subject', 'body') */
+let _tplFilter = '';
+
+/* ── Sayfa yüklenince ──────────────────────────────────────────── */
+document.addEventListener('DOMContentLoaded', function() {
+    loadTplList();
+    onTplTypeChange(); // Başlangıçta doğru input alanını göster
+});
+
+/* ── Filtre sekmesi tıklandığında ─────────────────────────────── */
+function setFilter(btn, type) {
+    _tplFilter = type;
+    // Aktif sekme stilini güncelle
+    document.querySelectorAll('.tpl-filter').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    loadTplList();
+}
+
+/* Şablon verisini ID ile hızlıca bulmak için cache Map
+   onclick'e JSON.stringify gömme — içerikte ' veya " varsa bozulur */
+const _tplCache = new Map();
+
+/* ── Şablon listesini API'den yükle ───────────────────────────── */
+async function loadTplList() {
+    const wrap = document.getElementById('tpl-list-wrap');
+    wrap.innerHTML = '<div style="text-align:center;color:var(--muted);padding:20px">Yükleniyor...</div>';
+
+    try {
+        const url = '/api/templates' + (_tplFilter ? `?type=${_tplFilter}` : '');
+        const d   = await (await fetch(url)).json();
+
+        if (!d.success || !d.data.length) {
+            wrap.innerHTML = '<div style="text-align:center;color:var(--muted);padding:20px">Henüz şablon yok. Aşağıdaki formdan ekleyin.</div>';
+            return;
+        }
+
+        // Şablonları cache'e al — editTpl(id) güvenle erişir
+        _tplCache.clear();
+        d.data.forEach(t => _tplCache.set(t.id, t));
+
+        /* Konular ve mesajlar ayrı gruplar halinde göster */
+        const subjects = d.data.filter(t => t.type === 'subject');
+        const bodies   = d.data.filter(t => t.type === 'body');
+
+        let html = '';
+
+        if (subjects.length && (_tplFilter === '' || _tplFilter === 'subject')) {
+            html += renderGroup('📌 Konu Şablonları', subjects);
+        }
+        if (bodies.length && (_tplFilter === '' || _tplFilter === 'body')) {
+            html += renderGroup('📄 Mesaj Şablonları', bodies);
+        }
+
+        wrap.innerHTML = html;
+    } catch(e) {
+        wrap.innerHTML = '<div style="color:var(--err);padding:20px">Yüklenemedi: ' + e + '</div>';
+    }
+}
+
+/* ── Grup HTML'i oluştur ──────────────────────────────────────── */
+function renderGroup(title, items) {
+    const rows = items.map(t => `
+    <tr style="border-bottom:1px solid var(--border)">
+        <!-- Şablon adı -->
+        <td style="padding:10px 12px;font-weight:500;min-width:160px">${esc(t.name)}</td>
+        <!-- İçerik önizlemesi — uzunsa kısalt -->
+        <td style="padding:10px 12px;font-size:12px;color:var(--muted);max-width:400px">
+            <div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:380px">
+                ${esc(t.content.slice(0, 120))}${t.content.length > 120 ? '…' : ''}
+            </div>
+        </td>
+        <!-- Oluşturulma tarihi -->
+        <td style="padding:10px 12px;font-size:11px;color:var(--muted);white-space:nowrap">
+            ${(t.updated_at || t.created_at || '').replace('T',' ').slice(0,16)}
+        </td>
+        <!-- Düzenle / Sil butonları -->
+        <td style="padding:10px 12px;text-align:right;display:flex;gap:6px;justify-content:flex-end">
+            <button class="btn btn-outline btn-sm" onclick="editTpl(${t.id})">✏️ Düzenle</button>
+            <button class="btn btn-danger btn-sm"  onclick="deleteTpl(${t.id}, '${esc(t.name)}')">🗑</button>
+        </td>
+    </tr>`).join('');
+
+    return `
+    <div style="margin-bottom:20px">
+        <div style="font-size:11px;font-weight:600;color:var(--muted);letter-spacing:.07em;
+                    text-transform:uppercase;margin-bottom:8px;padding:0 4px">${title}</div>
+        <div style="overflow-x:auto">
+            <table style="width:100%;border-collapse:collapse;font-size:13px">
+                <tbody>${rows}</tbody>
+            </table>
+        </div>
+    </div>`;
+}
+
+/* ── Şablon tipine göre input/textarea göster ─────────────────── */
+function onTplTypeChange() {
+    const type     = document.getElementById('tpl-type').value;
+    const input    = document.getElementById('tpl-content-input');
+    const textarea = document.getElementById('tpl-content-textarea');
+    const label    = document.getElementById('tpl-content-label');
+
+    if (type === 'subject') {
+        /* Konu: tek satır input */
+        input.style.display    = 'block';
+        textarea.style.display = 'none';
+        label.firstChild.textContent = 'Konu İçeriği ';
+        input.placeholder = 'Merhaba {{Ad}}, size özel teklifimiz var!';
+    } else {
+        /* Mesaj: çok satır textarea */
+        input.style.display    = 'none';
+        textarea.style.display = 'block';
+        label.firstChild.textContent = 'Mesaj İçeriği ';
+        textarea.placeholder = 'Sayın {{Ad}},\n\nMesajınız burada...';
+    }
+}
+
+/* ── Düzenleme modunu aç ─────────────────────────────────────── */
+function editTpl(tplId) {
+    // ID ile cache'den al — onclick'e JSON gömme, özel karakterlerde bozulur
+    const tpl = _tplCache.get(tplId);
+    if (!tpl) { console.error('Şablon bulunamadı:', tplId); return; }
+
+    document.getElementById('tpl-id').value   = tpl.id;
+    document.getElementById('tpl-type').value = tpl.type;
+    document.getElementById('tpl-type').disabled = true;  // Tip değiştirilemez
+    document.getElementById('tpl-name').value = tpl.name;
+    document.getElementById('tpl-form-title').textContent = `✏️ Şablon Düzenle — ${tpl.name}`;
+    document.getElementById('tpl-alert').style.display = 'none';
+
+    onTplTypeChange();  // Doğru input'u göster (subject=input, body=textarea)
+
+    if (tpl.type === 'subject') {
+        document.getElementById('tpl-content-input').value = tpl.content;
+    } else {
+        document.getElementById('tpl-content-textarea').value = tpl.content;
+    }
+
+    // Forma scroll
+    document.getElementById('tpl-form-card').scrollIntoView({ behavior: 'smooth' });
+}
+
+/* ── Formu sıfırla (yeni şablon modu) ────────────────────────── */
+function resetTplForm() {
+    document.getElementById('tpl-id').value              = '';
+    document.getElementById('tpl-type').value            = 'subject';
+    document.getElementById('tpl-type').disabled         = false;
+    document.getElementById('tpl-name').value            = '';
+    document.getElementById('tpl-content-input').value   = '';
+    document.getElementById('tpl-content-textarea').value = '';
+    document.getElementById('tpl-form-title').textContent = '➕ Yeni Şablon';
+    document.getElementById('tpl-alert').style.display   = 'none';
+    onTplTypeChange();
+}
+
+/* ── Şablonu kaydet (oluştur veya güncelle) ───────────────────── */
+async function saveTpl() {
+    const tplId   = document.getElementById('tpl-id').value;
+    const type    = document.getElementById('tpl-type').value;
+    const name    = document.getElementById('tpl-name').value.trim();
+    const content = type === 'subject'
+        ? document.getElementById('tpl-content-input').value.trim()
+        : document.getElementById('tpl-content-textarea').value.trim();
+
+    /* Alan kontrolü */
+    if (!name)    { showAlert('tpl-alert', 'Şablon adı zorunludur.', 'err'); return; }
+    if (!content) { showAlert('tpl-alert', 'İçerik boş olamaz.', 'err'); return; }
+
+    const btn = document.getElementById('tpl-save-txt');
+    const sp  = document.getElementById('tpl-sp');
+    btn.textContent = 'Kaydediliyor...'; sp.style.display = 'block';
+    hideAlert('tpl-alert');
+
+    try {
+        let d;
+        if (tplId) {
+            /* Güncelleme */
+            d = await (await fetch(`/api/templates/${tplId}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name, content })
+            })).json();
+        } else {
+            /* Yeni oluştur */
+            d = await (await fetch('/api/templates/create', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ type, name, content })
+            })).json();
+        }
+
+        if (d.success) {
+            resetTplForm();
+            loadTplList();
+        } else {
+            showAlert('tpl-alert', d.message, 'err');
+        }
+    } catch(e) {
+        showAlert('tpl-alert', 'Bağlantı hatası: ' + e, 'err');
+    } finally {
+        btn.textContent = '💾 Kaydet'; sp.style.display = 'none';
+    }
+}
+
+/* ── Şablonu sil ─────────────────────────────────────────────── */
+async function deleteTpl(id, name) {
+    if (!confirm(`"${name}" şablonu silinsin mi?`)) return;
+    const d = await (await fetch(`/api/templates/${id}`, { method: 'DELETE' })).json();
+    if (d.success) {
+        loadTplList();
+    } else {
+        alert('Silinemedi: ' + d.message);
+    }
+}
+</script>
+
+{% endblock %}
+

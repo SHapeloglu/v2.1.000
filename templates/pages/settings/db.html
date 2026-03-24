@@ -1,0 +1,44 @@
+{% extends "pages/settings/base.html" %}
+{% set active_tab = 'db' %}
+{% block title %}Veritabanı Ayarları{% endblock %}
+{% block subtitle %}MySQL bağlantısı .env dosyasına kaydedilir{% endblock %}
+
+{% block settings_content %}
+<div class="card">
+    <div class="card-title">🗄 Ana Veritabanı (EC2)</div>
+    <div class="fg">
+        <div class="g3">
+            <div class="field"><label>Host</label><input id="db-host" placeholder="localhost"></div>
+            <div class="field"><label>Port</label><input id="db-port" placeholder="3306" value="3306"></div>
+            <div class="field"><label>Veritabanı Adı</label><input id="db-name" placeholder="mailsender"></div>
+        </div>
+        <div class="g2">
+            <div class="field"><label>Kullanıcı</label><input id="db-user" placeholder="root"></div>
+            <div class="field"><label>Şifre</label>
+                <div class="pw-wrap"><input type="password" id="db-pass" placeholder="••••••••"><button class="pw-eye" onclick="togglePw('db-pass',this)">👁</button></div>
+            </div>
+        </div>
+        <div class="field">
+            <label>Şifreleme Anahtarı (SECRET_KEY) <span class="badge">Fernet Base64</span></label>
+            <div class="pw-wrap"><input type="password" id="sk" placeholder="Boş bırakırsanız yeni anahtar oluşturulur"><button class="pw-eye" onclick="togglePw('sk',this)">👁</button></div>
+            <div style="font-size:11px;color:var(--muted);margin-top:4px">SMTP şifrelerini DB'ye şifreli kaydeder. <a href="#" onclick="genKey();return false" style="color:var(--accent)">Yeni anahtar oluştur →</a></div>
+        </div>
+    </div>
+    <div class="sbar" id="db-sbar" style="margin-top:16px">
+        <div class="sdot" id="db-dot"></div>
+        <span id="db-stext">Bağlantı henüz test edilmedi.</span>
+        <div class="sp dark" id="db-sp"></div>
+    </div>
+    <div class="btn-row" style="margin-top:14px">
+        <button class="btn btn-outline" onclick="testDb()">🔌 Bağlantıyı Test Et</button>
+        <button class="btn btn-primary" onclick="saveDb()"><div class="sp" id="db-save-sp"></div><span id="db-save-txt">💾 Kaydet & Tabloları Oluştur</span></button>
+    </div>
+    <div class="alert" id="db-alert"></div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', loadDbConfig);
+</script>
+
+{% endblock %}
+

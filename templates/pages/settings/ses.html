@@ -1,0 +1,270 @@
+{% extends "pages/settings/base.html" %}
+{% set active_tab = 'ses' %}
+{% block title %}AWS SES Göndericiler{% endblock %}
+{% block subtitle %}Amazon Simple Email Service hesapları{% endblock %}
+
+{% block settings_content %}
+
+<!-- SES Listesi -->
+<div id="ses-list" style="margin-bottom:20px">
+    <div style="color:var(--muted);text-align:center;padding:20px">Yükleniyor...</div>
+</div>
+
+<!-- SES Form -->
+<div class="card">
+    <div class="card-title" id="ses-form-title">➕ Yeni AWS SES Gönderici</div>
+    <div style="font-size:12px;color:var(--muted);padding:10px 13px;background:rgba(52,211,153,.05);border:1px solid rgba(52,211,153,.15);border-radius:var(--r);margin-bottom:14px">
+        ☁ Credentials <strong style="color:var(--ok)">Fernet şifreli</strong> veritabanında saklanır. AWS hesabınızda SES servisinin etkin olduğundan emin olun.
+    </div>
+    <div class="fg">
+        <div class="g2">
+            <div class="field"><label>Görünen Ad *</label><input id="ses-name" placeholder="Firma SES Hesabı"></div>
+            <div class="field"><label>Gönderici E-posta *</label><input id="ses-email" placeholder="info@firma.com"></div>
+        </div>
+        <div class="g3">
+            <div class="field">
+                <label>AWS Access Key ID <span style="color:var(--muted);font-size:10px">(boş = değiştirme)</span></label>
+                <div class="pw-wrap"><input type="password" id="ses-key" placeholder="AKIA…"><button class="pw-eye" onclick="togglePw('ses-key',this)">👁</button></div>
+            </div>
+            <div class="field">
+                <label>AWS Secret Access Key <span style="color:var(--muted);font-size:10px">(boş = değiştirme)</span></label>
+                <div class="pw-wrap"><input type="password" id="ses-secret" placeholder="••••••••"><button class="pw-eye" onclick="togglePw('ses-secret',this)">👁</button></div>
+            </div>
+            <div class="field"><label>AWS Region</label>
+                <select id="ses-region">
+                    <option value="us-east-1">us-east-1 (N. Virginia)</option>
+                    <option value="eu-west-1">eu-west-1 (Ireland)</option>
+                    <option value="eu-central-1">eu-central-1 (Frankfurt)</option>
+                    <option value="eu-west-2">eu-west-2 (London)</option>
+                    <option value="eu-north-1">eu-north-1 (Stockholm)</option>
+                    <option value="us-east-2">us-east-2 (Ohio)</option>
+                    <option value="us-west-2">us-west-2 (Oregon)</option>
+                    <option value="ap-southeast-1">ap-southeast-1 (Singapore)</option>
+                    <option value="ap-northeast-1">ap-northeast-1 (Tokyo)</option>
+                    <option value="ap-south-1">ap-south-1 (Mumbai)</option>
+                    <option value="sa-east-1">sa-east-1 (São Paulo)</option>
+                    <option value="ca-central-1">ca-central-1 (Canada)</option>
+                </select>
+            </div>
+        </div>
+    </div>
+    <div class="fg" style="margin-top:10px">
+        <div class="g2">
+            <div class="field">
+                <label>Configuration Set <span style="color:var(--muted);font-size:10px">(SNS bounce takibi için)</span></label>
+                <div style="display:flex;gap:6px">
+                    <input id="ses-config-set" placeholder="MyConfigSet (boş bırakılabilir)" style="flex:1">
+                    <button class="btn btn-outline btn-sm" id="ses-load-cs-btn"
+                            onclick="loadConfigSets()" title="AWS'den listele"
+                            style="white-space:nowrap;padding:6px 10px">📋</button>
+                </div>
+                <div id="ses-cs-list" style="display:none;margin-top:4px;font-size:11px;color:var(--muted)"></div>
+                <div style="font-size:11px;color:var(--muted);margin-top:4px">
+                    SNS Webhook URL: <code id="ses-webhook-url" style="font-size:10px;word-break:break-all"></code>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="btn-row" style="margin-top:14px">
+        <button class="btn btn-primary" onclick="saveSes()"><div class="sp" id="ses-sp"></div><span id="ses-btn-txt">💾 Kaydet</span></button>
+        <button class="btn btn-outline" onclick="cancelSes()" id="ses-cancel-btn" style="display:none">İptal</button>
+    </div>
+    <div class="alert" id="ses-alert"></div>
+</div>
+
+<script>
+let _editSesId = null;
+
+document.addEventListener('DOMContentLoaded', () => {
+    loadSesList();
+    // Webhook URL'ini göster
+    const el = document.getElementById('ses-webhook-url');
+    if (el) el.textContent = window.location.origin + '/api/ses/sns-webhook';
+});
+
+async function loadSesList() {
+    try {
+        const d = await (await fetch('/api/senders')).json();
+        const senders = (d.data || []).filter(s => s.sender_mode === 'ses');
+        const container = document.getElementById('ses-list');
+        if (!senders.length) {
+            container.innerHTML = '<div class="card" style="padding:20px;text-align:center;color:var(--muted)">Henüz AWS SES gönderici eklenmedi. Aşağıdan ekleyin.</div>';
+            return;
+        }
+        container.innerHTML = `
+        <div style="background:var(--s1);border:1px solid var(--border);border-radius:var(--r3);overflow:hidden">
+            <table style="width:100%;border-collapse:collapse;font-size:13px">
+                <thead>
+                    <tr style="border-bottom:1px solid var(--border)">
+                        <th style="text-align:left;padding:11px 16px;color:var(--muted);font-weight:500;font-size:11px">Ad</th>
+                        <th style="text-align:left;padding:11px 16px;color:var(--muted);font-weight:500;font-size:11px">E-posta</th>
+                        <th style="text-align:left;padding:11px 16px;color:var(--muted);font-weight:500;font-size:11px">Region</th>
+                        <th style="text-align:left;padding:11px 16px;color:var(--muted);font-weight:500;font-size:11px">Durum</th>
+                        <th style="padding:11px 16px;width:130px"></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${senders.map(s => `
+                    <tr style="border-bottom:1px solid var(--border)">
+                        <td style="padding:12px 16px;font-weight:600">${esc(s.name)}</td>
+                        <td style="padding:12px 16px;font-size:11px;font-family:'Space Mono',monospace;color:var(--muted)">${esc(s.email)}</td>
+                        <td style="padding:12px 16px;font-size:11px;font-family:'Space Mono',monospace">${esc(s.aws_region||'us-east-1')}</td>
+                        <td style="padding:12px 16px"><span class="chip ${s.is_active?'chip-on':'chip-off'}">${s.is_active?'Aktif':'Pasif'}</span></td>
+                        <td style="padding:12px 16px;white-space:nowrap;text-align:right">
+                            <button class="btn btn-outline btn-sm" onclick="checkSesQuota(${s.id})" title="AWS Kota">☁</button>
+                            <button class="btn btn-outline btn-sm" onclick="showReputation(${s.id})" title="İtibar Raporu">📊</button>
+                            <button class="btn btn-outline btn-sm" onclick="calcAutoDelay(${s.id})" title="Otomatik Hız">⚡</button>
+                            <button class="btn btn-outline btn-sm" onclick="testSes(${s.id})" title="Bağlantı test et">🔌</button>
+                            <button class="btn btn-outline btn-sm" onclick="editSes(${s.id})" title="Düzenle">✏</button>
+                            <button class="btn btn-danger btn-sm" onclick="delSes(${s.id})" title="Sil">🗑</button>
+                        </td>
+                    </tr>`).join('')}
+                </tbody>
+            </table>
+        </div>`;
+    } catch(e) { console.error(e); }
+}
+
+async function editSes(id) {
+    const d = await (await fetch('/api/senders')).json();
+    const s = (d.data||[]).find(x => x.id === id);
+    if (!s) return;
+    _editSesId = id;
+    document.getElementById('ses-name').value   = s.name || '';
+    document.getElementById('ses-email').value  = s.email || '';
+    document.getElementById('ses-key').value    = '';
+    document.getElementById('ses-secret').value = '';
+    document.getElementById('ses-key').placeholder = 'Kayıtlı key (boş = değiştirme)';
+    document.getElementById('ses-secret').placeholder = 'Kayıtlı secret (boş = değiştirme)';
+    document.getElementById('ses-region').value = s.aws_region || 'us-east-1';
+    document.getElementById('ses-config-set').value = s.configuration_set || '';
+    document.getElementById('ses-form-title').textContent = '✏ Düzenle: ' + s.name;
+    document.getElementById('ses-cancel-btn').style.display = 'inline-flex';
+    document.getElementById('ses-btn-txt').textContent = '💾 Güncelle';
+    hideAlert('ses-alert');
+    document.querySelector('.card:last-child').scrollIntoView({behavior:'smooth'});
+}
+
+function cancelSes() {
+    _editSesId = null;
+    ['ses-name','ses-email','ses-key','ses-secret'].forEach(id => {
+        const el = document.getElementById(id); if(el) el.value = '';
+    });
+    document.getElementById('ses-key').placeholder = 'AKIA…';
+    document.getElementById('ses-secret').placeholder = '••••••••';
+    document.getElementById('ses-region').value = 'us-east-1';
+    document.getElementById('ses-form-title').textContent = 'Yeni AWS SES Gönderici';
+    document.getElementById('ses-cancel-btn').style.display = 'none';
+    document.getElementById('ses-btn-txt').textContent = '💾 Kaydet';
+}
+
+async function saveSes() {
+    const sp = document.getElementById('ses-sp'), btxt = document.getElementById('ses-btn-txt');
+    sp.style.display = 'block'; btxt.textContent = 'Kaydediliyor...'; hideAlert('ses-alert');
+    const p = {
+        name:           document.getElementById('ses-name').value.trim(),
+        email:          document.getElementById('ses-email').value.trim(),
+        sender_mode:    'ses',
+        aws_access_key: document.getElementById('ses-key').value,
+        aws_secret_key: document.getElementById('ses-secret').value,
+        aws_region:     document.getElementById('ses-region').value,
+        configuration_set: document.getElementById('ses-config-set').value.trim(),
+        is_active:      1,
+    };
+    if (!p.name || !p.email) {
+        showAlert('ses-alert', 'Ad ve e-posta zorunludur.', 'err');
+        sp.style.display = 'none'; btxt.textContent = '💾 Kaydet'; return;
+    }
+    if (!_editSesId && (!p.aws_access_key || !p.aws_secret_key)) {
+        showAlert('ses-alert', 'Yeni eklemede Access Key ve Secret Key zorunludur.', 'err');
+        sp.style.display = 'none'; btxt.textContent = '💾 Kaydet'; return;
+    }
+    const url = _editSesId ? `/api/senders/${_editSesId}` : '/api/senders';
+    try {
+        const d = await (await fetch(url, {
+            method: _editSesId ? 'PUT' : 'POST',
+            headers: {'Content-Type':'application/json'},
+            body: JSON.stringify(p)
+        })).json();
+        showAlert('ses-alert', d.message, d.success ? 'ok' : 'err');
+        if (d.success) { cancelSes(); loadSesList(); }
+    } catch(e) { showAlert('ses-alert', 'Bağlantı hatası: ' + e.message, 'err'); }
+    finally { sp.style.display = 'none'; btxt.textContent = '💾 Kaydet'; }
+}
+
+async function testSes(id) {
+    showAlert('ses-alert', '⏳ AWS bağlantısı test ediliyor...', 'ok');
+    const d = await (await fetch(`/api/senders/${id}/test`, {method:'POST'})).json();
+    showAlert('ses-alert', (d.success ? '✅ ' : '❌ ') + d.message, d.success ? 'ok' : 'err');
+}
+
+async function delSes(id) {
+    if (!confirm('Bu göndericiye ait tüm loglar da silinecek. Emin misiniz?')) return;
+    const d = await (await fetch(`/api/senders/${id}`, {method:'DELETE'})).json();
+    if (d.success) loadSesList(); else alert(d.message);
+}
+
+async function checkSesQuota(id) {
+    showAlert('ses-alert', '⏳ AWS kota sorgulanıyor...', 'ok');
+    try {
+        const d = await (await fetch(`/api/ses-quota/${id}`)).json();
+        if (!d.success) { showAlert('ses-alert', '❌ ' + esc(d.message), 'err'); return; }
+        const used = d.sent_24h, max = d.max_24h;
+        const pct = max > 0 ? Math.round(used / max * 100) : 0;
+        const color = pct >= 80 ? 'err' : 'ok';
+        showAlert('ses-alert',
+            `☁ Son 24s: ${used.toLocaleString()} / ${max.toLocaleString()} mail (%${pct}) — Max hız: ${d.max_per_sec} mail/s`,
+            color);
+    } catch(e) { showAlert('ses-alert', 'Bağlantı hatası.', 'err'); }
+}
+
+// ── İtibar Monitörü ────────────────────────────────────────────────
+async function showReputation(senderId) {
+    const r = await fetch('/api/ses/reputation/' + senderId + '?days=7');
+    const d = await r.json();
+    if (!d.success) { alert(d.message); return; }
+    const s = d.data;
+    const br = s.bounce_rate.toFixed(2);
+    const cr = s.complaint_rate.toFixed(3);
+    const bOk = s.bounce_ok    ? 'OK' : 'YUKSEK';
+    const cOk = s.complaint_ok ? 'OK' : 'YUKSEK';
+    alert(
+        'Son ' + s.days + ' gun itibar raporu\n\n' +
+        'Toplam gonderim : ' + s.total + '\n' +
+        'Bounce orani    : %' + br + ' (limit: %5) [' + bOk + ']\n' +
+        'Sikayet orani   : %' + cr + ' (limit: %0.1) [' + cOk + ']\n\n' +
+        (!s.bounce_ok    ? 'BOUNCE ORANI YUKSEK! Listeyi temizleyin.\n' : '') +
+        (!s.complaint_ok ? 'SIKAYET ORANI YUKSEK!\n' : '') +
+        (s.bounce_ok && s.complaint_ok ? 'Hesap sagligi iyi.' : '')
+    );
+}
+
+async function calcAutoDelay(senderId) {
+    const r = await fetch('/api/ses/auto-delay/' + senderId);
+    const d = await r.json();
+    if (!d.success) { alert('Hata: ' + d.message); return; }
+    alert('Otomatik Hiz Onerisi\n\n' + d.note + '\n\nToplu gonderimde delay_ms: ' + d.delay_ms);
+}
+
+async function loadConfigSets() {
+    const editId = _editSesId;
+    if (!editId) { alert('Once bir gondericyi duzenleme moduna alin.'); return; }
+    const btn = document.getElementById('ses-load-cs-btn');
+    btn.textContent = '...';
+    try {
+        const r = await fetch('/api/ses/configuration-sets/' + editId);
+        const d = await r.json();
+        const el = document.getElementById('ses-cs-list');
+        if (!d.success) { el.textContent = 'Yuklenemedi: ' + d.message; el.style.display = ''; return; }
+        if (!d.configuration_sets.length) {
+            el.textContent = 'AWS hesabinda ConfigurationSet bulunamadi.';
+        } else {
+            el.innerHTML = 'Mevcut: ' + d.configuration_sets.map(function(n) {
+                return '<a href="#" onclick="document.getElementById(\'ses-config-set\').value=\'' + n + '\';document.getElementById(\'ses-cs-list\').style.display=\'none\';return false" style="color:var(--accent)">' + n + '</a>';
+            }).join(' | ');
+        }
+        el.style.display = '';
+    } finally { btn.textContent = '?'; }
+}
+</script>
+{% endblock %}

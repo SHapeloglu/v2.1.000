@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+
+{% block title %}Gönderim Kuralları{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>🛡 Gönderim Kuralları</h1>
+    <p>Aynı alıcıya tekrar göndermek için minimum bekleme süresini belirleyin.</p>
+</div>
+
+<div class="card">
+    <div class="card-title" id="rule-form-title">Yeni Kural Ekle</div>
+    <div class="fg">
+        <div class="g2">
+            <div class="field"><label>Kural Adı</label><input id="r-name" placeholder="Haftalık Bülten Kuralı"></div>
+            <div class="field"><label>Bu Kurala Bağlı Gönderici</label><select id="r-sender"><option value="">— Seç —</option></select></div>
+        </div>
+        <div class="field">
+            <label>Aynı Adrese Tekrar Gönderim İçin Min. Bekleme (Saat)</label>
+            <div style="display:flex;gap:12px;align-items:flex-start">
+                <div style="flex:0 0 120px"><input type="number" id="r-interval" placeholder="0" value="0" min="0"></div>
+                <div>
+                    <div class="pills">
+                        <button class="pill" onclick="setRInterval(0,this)">Sınırsız</button>
+                        <button class="pill" onclick="setRInterval(24,this)">1 Gün</button>
+                        <button class="pill" onclick="setRInterval(168,this)">1 Hafta</button>
+                        <button class="pill" onclick="setRInterval(720,this)">1 Ay</button>
+                    </div>
+                </div>
+            </div>
+            <div class="ib" style="margin-top:8px">⏱ Aynı alıcıya <strong id="ip-val">sınırsız sıklıkta</strong> gönderilebilir.</div>
+        </div>
+    </div>
+    <div class="btn-row" style="margin-top:14px">
+        <button class="btn btn-primary" onclick="saveRule()"><div class="sp" id="r-sp"></div><span id="r-btn-txt">💾 Kaydet</span></button>
+        <button class="btn btn-outline" onclick="cancelRuleEdit()" id="r-cancel-btn" style="display:none">İptal</button>
+    </div>
+    <div class="alert" id="r-alert"></div>
+</div>
+
+<div class="card">
+    <div class="card-title">Mevcut Kurallar</div>
+    <div class="tbl-wrap">
+        <table>
+            <thead><tr><th>Ad</th><th>Gönderici</th><th>Min. Aralık</th><th>Durum</th><th>İşlem</th></tr></thead>
+            <tbody id="rules-tbody"><tr><td colspan="5" style="text-align:center;color:var(--muted);padding:20px">Yükleniyor...</td></tr></tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        loadRules();
+        loadSenderSelects();
+        document.getElementById('r-interval').addEventListener('input', updateIPreview);
+        updateIPreview();
+    });
+</script>
+{% endblock %}

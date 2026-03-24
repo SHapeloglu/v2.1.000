@@ -1,0 +1,437 @@
+/*
+ * style.css — MailSender Pro Arayüz Stilleri
+ * ============================================
+ * BÖLÜMLER:
+ *   1. CSS Değişkenleri  — :root renk, boyut ve radius token'ları
+ *   2. Temel Reset       — box-sizing, margin/padding sıfırlama
+ *   3. Layout            — .shell grid, sidebar, main
+ *   4. Marka & Nav       — logo, navigasyon butonları, badge
+ *   5. Kart & Form       — .card, .field, input, select, textarea
+ *   6. Butonlar          — .btn varyantları, .sp (spinner)
+ *   7. Toggle & Pill     — checkbox toggle, hızlı seçim pill butonları
+ *   8. Durum göstergeleri— .sbar, .sdot, .alert
+ *   9. Tablo             — .tbl-wrap, thead, tbody, .chip durum etiketleri
+ *  10. Dosya yükleme     — .fup drag-drop alanı
+ *  11. İlerleme & Log    — .prog-bg/.prog-fill, .logbox, .pstats
+ *  12. Yardımcılar       — .badge, .ib, .pager, .var-tag, .log-filters
+ *  13. Animasyonlar      — fadeUp, spin, pulse
+ *  14. Düzeltmeler       — link/nav-btn text-decoration override
+ *  15. Tema Sistemi      — 7 data-theme, açık tema genel düzeltmeleri
+ *
+ * TASARIM İLKELERİ:
+ *   - Tüm renkler CSS değişken (var(--x)) ile tanımlı → tema geçişi anlık
+ *   - Karanlık varsayılan (charcoal), 4 açık + 2 koyu alternatif tema
+ *   - Border-radius token'ları: --r(12) --r2(18) --r3(22) — hiyerarşik yumuşaklık
+ *   - Tipografi: DM Sans (genel) + Space Mono (monospace/etiket)
+ */
+
+/* ══════════════════════════════════════════════════════
+   1. CSS DEĞİŞKENLERİ
+   ══════════════════════════════════════════════════════ */
+:root{
+  /* Arka plan katmanları: --bg (en derin) → --s3 (en yüzeysel) */
+  --bg:#07070d;--s1:#0f0f18;--s2:#161622;--s3:#1e1e2e;
+
+  /* Kenarlık renkleri: hafif (border) ve belirgin (border2) */
+  --border:rgba(130,130,220,0.1);--border2:rgba(130,130,220,0.2);
+
+  /* Vurgu renkleri: --accent (mor-mavi ana), --a2 (pembe), --a3 (yeşil) */
+  --accent:#7c6ffd;--a2:#f472b6;--a3:#34d399;
+
+  /* Metin: --text (okunabilir), --muted (ikincil), --dim (çok soluk/disabled) */
+  --text:#e2e2f0;--muted:#6b6b8a;--dim:#3a3a5c;
+
+  /* Durum renkleri */
+  --ok:#4ade80;--err:#f87171;--warn:#fbbf24;--info:#60a5fa;
+
+  /* Border-radius ölçeği: küçük(r) → orta(r2) → büyük(r3) */
+  --r:12px;--r2:18px;--r3:22px;
+}
+
+/* ══════════════════════════════════════════════════════
+   2. TEMEL RESET
+   ══════════════════════════════════════════════════════ */
+/* border-box: padding ve border, genişliği artırmaz */
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;overflow-x:hidden}
+
+/* ══════════════════════════════════════════════════════
+   3. LAYOUT — Sidebar + İçerik Grid
+   ══════════════════════════════════════════════════════ */
+/* 2 sütunlu grid: 220px sabit sidebar + esnek içerik */
+.shell{display:grid;grid-template-columns:220px 1fr;min-height:100vh}
+
+/* Sidebar: position:sticky + height:100vh → sayfayı kaydırınca sabit kalır */
+.sidebar{background:var(--s1);border-right:1px solid var(--border);padding:28px 0;display:flex;flex-direction:column;position:sticky;top:0;height:100vh;overflow-y:auto}
+
+/* İçerik alanı: max-width ile geniş ekranlarda okunabilirlik */
+main{padding:36px 40px;max-width:960px}
+
+/* Sayfalar varsayılan gizli; JS .active ekleyince fadeUp ile belirir */
+.page{display:none;animation:fadeUp .3s ease}
+.page.active{display:block}
+.page-header{margin-bottom:28px}
+.page-header h1{font-size:26px;font-weight:600;letter-spacing:-.02em}
+.page-header p{color:var(--muted);font-size:14px;margin-top:6px}
+
+/* ══════════════════════════════════════════════════════
+   4. MARKA & NAVİGASYON
+   ══════════════════════════════════════════════════════ */
+.brand{padding:0 20px 24px;border-bottom:1px solid var(--border)}
+
+/* ::before ile dekoratif çizgi — logo solundaki yatay aksan */
+.brand-logo{font-family:'Space Mono',monospace;font-size:10px;letter-spacing:.3em;text-transform:uppercase;color:var(--accent);margin-bottom:8px;display:flex;align-items:center;gap:8px}
+.brand-logo::before{content:'';width:20px;height:2px;background:var(--accent)}
+.brand h2{font-size:18px;font-weight:600;letter-spacing:-.02em}
+
+/* Gradient metin: background-clip:text ile renk geçişli yazı */
+.brand h2 span{background:linear-gradient(135deg,var(--accent),var(--a2));-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+.brand p{font-size:11px;color:var(--muted);margin-top:4px}
+
+nav{padding:16px 12px;flex:1;display:flex;flex-direction:column;gap:4px}
+
+/* Nav buton: <button> veya <a> olabilir — her ikisi aynı görünür */
+.nav-btn{display:flex;align-items:center;gap:10px;padding:10px 12px;border:none;border-radius:var(--r);background:transparent;color:var(--muted);font-family:'DM Sans',sans-serif;font-size:13px;font-weight:500;cursor:pointer;transition:all .2s;text-align:left;width:100%}
+.nav-btn .icon{font-size:16px;width:20px;text-align:center}
+.nav-btn:hover{background:var(--s2);color:var(--text)}
+
+/* Aktif sayfa: hafif mor degradeli arka plan + ince border */
+.nav-btn.active{background:linear-gradient(135deg,rgba(124,111,253,.15),rgba(244,114,182,.1));color:var(--text);border:1px solid rgba(124,111,253,.25)}
+
+/* Bildirim rozeti: kırmızı (hata), yeşil (ok) */
+.nav-badge{margin-left:auto;background:var(--err);color:#fff;font-size:10px;font-weight:700;border-radius:99px;padding:2px 7px;min-width:20px;text-align:center}
+.nav-badge.ok{background:var(--ok)}
+.sidebar-footer{padding:16px 20px;border-top:1px solid var(--border);font-size:11px;color:var(--dim)}
+
+/* ══════════════════════════════════════════════════════
+   5. KART & FORM ELEMENTLERİ
+   ══════════════════════════════════════════════════════ */
+/* --r3 (22px): en büyük radius — en dış kap için */
+.card{background:var(--s1);border:1px solid var(--border);border-radius:var(--r3);padding:24px 28px;margin-bottom:20px}
+
+/* Kart başlığı: ::after ile uzayan yatay çizgi (flex ile) */
+.card-title{font-family:'Space Mono',monospace;font-size:9px;letter-spacing:.25em;text-transform:uppercase;color:var(--muted);margin-bottom:18px;display:flex;align-items:center;gap:8px}
+.card-title::after{content:'';flex:1;height:1px;background:var(--border)}
+
+/* Form grid yardımcıları */
+.fg{display:flex;flex-direction:column;gap:14px}   /* Tek sütun */
+.g2{display:grid;grid-template-columns:1fr 1fr;gap:14px}    /* 2 sütun */
+.g3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px} /* 3 sütun */
+.field{display:flex;flex-direction:column;gap:7px}
+
+/* Label: küçük caps + letter-spacing → kompakt form etiketleri */
+label{font-size:11px;font-weight:600;color:var(--muted);letter-spacing:.07em;text-transform:uppercase}
+
+/* Tüm form alanları tutarlı görünüm: --s2 arka plan, focus'ta mor glow */
+input,select,textarea{background:var(--s2);border:1px solid var(--border);border-radius:var(--r);color:var(--text);font-family:'DM Sans',sans-serif;font-size:13px;padding:10px 13px;outline:none;width:100%;transition:border-color .2s,box-shadow .2s}
+input:focus,select:focus,textarea:focus{border-color:rgba(124,111,253,.5);box-shadow:0 0 0 3px rgba(124,111,253,.08)}
+select option{background:var(--s2)}
+textarea{resize:vertical;min-height:120px;line-height:1.7}
+
+/* Şifre alanı: göz ikonu için padding-right rezervasyonu */
+.pw-wrap{position:relative}
+.pw-wrap input{padding-right:42px}
+.pw-eye{position:absolute;right:11px;top:50%;transform:translateY(-50%);background:none;border:none;color:var(--muted);cursor:pointer;font-size:15px;padding:3px}
+
+/* ══════════════════════════════════════════════════════
+   6. BUTONLAR
+   ══════════════════════════════════════════════════════ */
+.btn-row{display:flex;gap:10px;flex-wrap:wrap}
+
+/* Temel buton: hover'da hafif yukarı kayma + opaklık azalma */
+.btn{padding:10px 18px;border:none;border-radius:var(--r);font-family:'DM Sans',sans-serif;font-size:13px;font-weight:600;cursor:pointer;transition:opacity .2s,transform .15s;display:inline-flex;align-items:center;gap:7px}
+.btn:hover:not(:disabled){opacity:.85;transform:translateY(-1px)}
+.btn:active:not(:disabled){transform:translateY(0)}
+.btn:disabled{opacity:.38;cursor:not-allowed;transform:none}
+
+/* Varyantlar: gradient butonlar (primary/success/danger) + çerçeveli (outline) */
+.btn-primary{background:linear-gradient(135deg,var(--accent),#8b5cf6);color:#fff}
+.btn-success{background:linear-gradient(135deg,#059669,#34d399);color:#fff}
+.btn-danger{background:linear-gradient(135deg,#dc2626,#f87171);color:#fff}
+.btn-outline{background:transparent;border:1px solid var(--border2);color:var(--text)}
+.btn-sm{padding:7px 13px;font-size:12px}      /* Küçük buton — tablo içi eylemler */
+.btn-full{width:100%;justify-content:center}  /* Tam genişlik — form altı kaydet butonu */
+
+/* Spinner: border-top rengi dönerek yükleme efekti verir */
+.sp{width:15px;height:15px;border:2px solid rgba(255,255,255,.25);border-top-color:#fff;border-radius:50%;animation:spin .7s linear infinite;display:none;flex-shrink:0}
+.sp.dark{border-color:rgba(124,111,253,.2);border-top-color:var(--accent)}
+
+/* ══════════════════════════════════════════════════════
+   7. TOGGLE & PILL
+   ══════════════════════════════════════════════════════ */
+.toggle-row{display:flex;align-items:center;justify-content:space-between;background:var(--s2);border:1px solid var(--border);border-radius:var(--r);padding:10px 13px}
+.tgl-label{font-size:13px;color:var(--text)}
+
+/* CSS-only toggle: gerçek checkbox gizlenir, .tgl-sl ile özel görünüm */
+.tgl{position:relative;width:40px;height:20px;flex-shrink:0}
+.tgl input{opacity:0;width:0;height:0}
+.tgl-sl{position:absolute;inset:0;background:var(--dim);border-radius:99px;cursor:pointer;transition:background .2s}
+
+/* ::before → yuvarlak sürgü; checked durumunda sağa kayar */
+.tgl-sl::before{content:'';position:absolute;width:14px;height:14px;left:3px;top:3px;background:#fff;border-radius:50%;transition:transform .2s;box-shadow:0 1px 3px rgba(0,0,0,.3)}
+.tgl input:checked+.tgl-sl{background:var(--accent)}
+.tgl input:checked+.tgl-sl::before{transform:translateX(20px)}
+
+/* Pill butonlar: SMTP port (465/587/25) ve aralık hızlı seçimi için */
+.pills{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
+.pill{padding:4px 11px;border-radius:99px;border:1px solid var(--border);background:transparent;color:var(--muted);font-size:11px;font-family:'DM Sans',sans-serif;cursor:pointer;transition:all .2s}
+.pill:hover,.pill.active{border-color:var(--accent);color:var(--accent);background:rgba(124,111,253,.08)}
+
+/* ══════════════════════════════════════════════════════
+   8. DURUM GÖSTERGELERİ
+   ══════════════════════════════════════════════════════ */
+/* .sbar: DB/SMTP durum satırı — nokta + metin yan yana */
+.sbar{display:flex;align-items:center;gap:10px;background:var(--s2);border:1px solid var(--border);border-radius:var(--r);padding:10px 13px;font-size:12px;color:var(--muted)}
+
+/* .sdot: durum noktası — loading'de pulse animasyonu */
+.sdot{width:7px;height:7px;border-radius:50%;background:var(--dim);flex-shrink:0;transition:background .3s}
+.sdot.ok{background:var(--ok);box-shadow:0 0 5px rgba(74,222,128,.4)} /* Yeşil glow */
+.sdot.err{background:var(--err)}
+.sdot.loading{background:var(--accent);animation:pulse .8s ease-in-out infinite alternate}
+
+/* Alert: varsayılan gizli (display:none), .show eklenince fadeUp ile belirir */
+.alert{display:none;padding:11px 15px;border-radius:var(--r);font-size:12px;font-weight:500;margin-top:12px;animation:fadeUp .25s ease}
+.alert.ok{background:rgba(74,222,128,.08);border:1px solid rgba(74,222,128,.2);color:var(--ok)}
+.alert.err{background:rgba(248,113,113,.08);border:1px solid rgba(248,113,113,.2);color:var(--err)}
+.alert.show{display:block}
+
+/* ══════════════════════════════════════════════════════
+   9. TABLO & ÇİP ETİKETLERİ
+   ══════════════════════════════════════════════════════ */
+/* overflow-x:auto: dar ekranlarda yatay kaydırma */
+.tbl-wrap{overflow-x:auto;border-radius:var(--r);border:1px solid var(--border)}
+table{width:100%;border-collapse:collapse;font-size:12px}
+thead th{background:var(--s2);padding:9px 13px;text-align:left;color:var(--muted);font-weight:600;letter-spacing:.06em;text-transform:uppercase;font-size:10px;border-bottom:1px solid var(--border);white-space:nowrap}
+tbody td{padding:9px 13px;border-bottom:1px solid rgba(130,130,220,.05);color:var(--text);vertical-align:middle}
+tbody tr:last-child td{border-bottom:none}
+
+/* Satır hover: çok hafif vurgu — tabloyu taramak için */
+tbody tr:hover td{background:rgba(124,111,253,.03)}
+
+/* Chip etiketleri: durum rozetleri (sent/failed/skipped/active/passive) */
+.chip{display:inline-flex;align-items:center;padding:3px 9px;border-radius:99px;font-size:10px;font-weight:600}
+.chip-ok{background:rgba(74,222,128,.12);color:var(--ok)}    /* Gönderildi */
+.chip-err{background:rgba(248,113,113,.12);color:var(--err)} /* Hata */
+.chip-skip{background:rgba(251,191,36,.12);color:var(--warn)} /* Atlandı */
+.chip-on{background:rgba(124,111,253,.15);color:var(--accent)} /* Aktif */
+.chip-off{background:rgba(107,107,138,.12);color:var(--muted)} /* Pasif */
+
+/* ══════════════════════════════════════════════════════
+   10. DOSYA YÜKLEME ALANI
+   ══════════════════════════════════════════════════════ */
+/* Kesik kenarlıklı sürükle-bırak kutusu */
+.fup{border:1px dashed var(--border2);border-radius:var(--r);padding:16px;text-align:center;cursor:pointer;transition:all .2s}
+.fup:hover{border-color:var(--accent);background:rgba(124,111,253,.04)}
+.fup input{display:none}  /* Gerçek file input gizli — .fup tıklanınca tetiklenir */
+.fup-icon{font-size:22px;margin-bottom:4px}
+.fup-txt{font-size:12px;color:var(--muted)}
+.fup-txt strong{color:var(--accent)}
+.fup-name{font-size:11px;color:var(--a2);margin-top:4px} /* Seçilen dosya adı */
+
+/* Excel önizleme tablosu */
+.xprev{margin-top:10px;overflow-x:auto;border-radius:var(--r);border:1px solid var(--border)}
+.xprev table th{font-size:9px}
+.xprev table td{font-size:11px}
+
+/* ══════════════════════════════════════════════════════
+   11. İLERLEME ÇUBUĞU & LOG KUTUSU
+   ══════════════════════════════════════════════════════ */
+/* İnce (6px) degrade ilerleme çubuğu */
+.prog-bg{background:var(--s2);border-radius:99px;height:6px;overflow:hidden;margin-bottom:8px}
+/* width: JS tarafından dinamik güncellenir (0% → 100%) */
+.prog-fill{height:100%;background:linear-gradient(90deg,var(--accent),var(--a2));border-radius:99px;transition:width .4s ease;width:0%}
+
+/* Gönderim istatistikleri satırı: ✓N başarılı  ✗N hatalı  ⏭N atlandı */
+.pstats{display:flex;gap:14px;font-size:12px;margin-bottom:10px}
+.ps-ok{color:var(--ok)}.ps-err{color:var(--err)}.ps-skip{color:var(--warn)}.ps-tot{color:var(--muted)}
+
+/* Canlı log kutusu: monospace, kaydırılabilir, sabit yükseklik */
+.logbox{background:var(--s2);border:1px solid var(--border);border-radius:var(--r);padding:10px 12px;max-height:220px;overflow-y:auto;font-family:'Space Mono',monospace;font-size:10px;line-height:1.8}
+.l-ok{color:var(--ok)}.l-err{color:var(--err)}.l-skip{color:var(--warn)}.l-info{color:var(--muted)}
+
+/* ══════════════════════════════════════════════════════
+   12. YARDIMCI ELEMANLAR
+   ══════════════════════════════════════════════════════ */
+/* .badge: "BETA", "YENİ" gibi küçük bilgi rozeti */
+.badge{display:inline-flex;align-items:center;font-size:9px;color:var(--accent);background:rgba(124,111,253,.1);border:1px solid rgba(124,111,253,.2);border-radius:5px;padding:2px 7px;text-transform:uppercase;letter-spacing:.05em;margin-left:7px}
+
+/* .ib: uyarı satırı (sarı ton) — bilgi notu kutuları için */
+.ib{display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--warn);background:rgba(251,191,36,.08);border:1px solid rgba(251,191,36,.2);border-radius:var(--r);padding:8px 12px}
+
+/* Log sayfalama: önceki/sonraki butonları */
+.pager{display:flex;align-items:center;gap:8px;margin-top:14px;font-size:12px;color:var(--muted)}
+.pager button{padding:5px 11px;border:1px solid var(--border);border-radius:var(--r);background:transparent;color:var(--text);font-size:12px;cursor:pointer}
+.pager button:disabled{opacity:.3;cursor:default}
+
+/* Log sayfası filtre satırı */
+.log-filters{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px;align-items:center}
+.log-filters input,.log-filters select{padding:8px 11px;font-size:12px}
+
+/* {{değişken}} etiket satırı — tıklanınca aktif alana ekler */
+.var-tags{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+.var-tag{padding:3px 9px;border-radius:99px;background:rgba(124,111,253,.12);border:1px solid rgba(124,111,253,.2);color:var(--accent);font-size:11px;cursor:pointer;font-family:'Space Mono',monospace}
+.var-tag:hover{background:rgba(124,111,253,.25)}
+
+/* ══════════════════════════════════════════════════════
+   13. ANİMASYONLAR
+   ══════════════════════════════════════════════════════ */
+/* Sayfa/alert geçişi: aşağıdan yukarı süzerek belirir */
+@keyframes fadeUp{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:translateY(0)}}
+/* Spinner: border-top sonsuz dönüşü */
+@keyframes spin{to{transform:rotate(360deg)}}
+/* Durum noktası: opaklık nabız atışı */
+@keyframes pulse{from{opacity:.4}to{opacity:1}}
+
+/* ══════════════════════════════════════════════════════
+   14. DÜZELTMELEr
+   ══════════════════════════════════════════════════════ */
+/* <a> etiketleri link görünümü taşımasın — nav butonları için kritik */
+a {
+    text-decoration: none;
+}
+.nav-btn {
+    text-decoration: none;
+}
+
+/* Aktif nav buton stili (hem <button> hem <a> için tekrar tanımlanmıştır) */
+.nav-btn.active {
+    background: linear-gradient(135deg,rgba(124,111,253,.15),rgba(244,114,182,.1));
+    color: var(--text);
+    border: 1px solid rgba(124,111,253,.25);
+}
+
+/* ══════════════════════════════════════════════════════
+   15. TEMA SİSTEMİ — 7 data-theme
+   ══════════════════════════════════════════════════════
+   Kullanım: <html data-theme="lavender">
+   base.html'deki FOUC önleyici script, tercihi localStorage'dan okuyup
+   sayfa render edilmeden önce <html> elementine uygular.
+   ══════════════════════════════════════════════════════ */
+
+/* 1. Charcoal Dark (varsayılan) — derin koyu, mor aksanlı */
+[data-theme="charcoal"] {
+  --bg:#07070d;--s1:#0f0f18;--s2:#161622;--s3:#1e1e2e;
+  --border:rgba(130,130,220,0.1);--border2:rgba(130,130,220,0.2);
+  --accent:#7c6ffd;--a2:#f472b6;--a3:#34d399;
+  --text:#e2e2f0;--muted:#6b6b8a;--dim:#3a3a5c;
+  --ok:#4ade80;--err:#f87171;--warn:#fbbf24;--info:#60a5fa;
+}
+
+/* 2. Digital Lavender — açık, sakin, pastel mor */
+[data-theme="lavender"] {
+  --bg:#F0EEE9;--s1:#ffffff;--s2:#F5F3EF;--s3:#EAE8E3;
+  --border:rgba(100,80,160,0.15);--border2:rgba(100,80,160,0.25);
+  --accent:#7B5EA7;--a2:#FF6B6B;--a3:#AAF0D1;
+  --text:#141414;--muted:#6B6B8A;--dim:#C8C5DC;
+  --ok:#2E9E68;--err:#E53E3E;--warn:#D97706;--info:#3B82F6;
+}
+
+/* 3. Neo Mint — ferah, futuristik yeşil */
+[data-theme="mint"] {
+  --bg:#F0FBF6;--s1:#ffffff;--s2:#E6FAF2;--s3:#D4F5E8;
+  --border:rgba(0,120,80,0.15);--border2:rgba(0,120,80,0.25);
+  --accent:#008060;--a2:#FF6B6B;--a3:#E6E6FA;
+  --text:#141414;--muted:#4A7A66;--dim:#AAF0D1;
+  --ok:#008060;--err:#E53E3E;--warn:#D97706;--info:#3B82F6;
+}
+
+/* 4. Sage Green — doğal, sakin, orman yeşili */
+[data-theme="sage"] {
+  --bg:#F4F7F0;--s1:#ffffff;--s2:#EBF0E5;--s3:#DDE6D4;
+  --border:rgba(80,110,60,0.15);--border2:rgba(80,110,60,0.25);
+  --accent:#5A7A42;--a2:#FF6B6B;--a3:#AAF0D1;
+  --text:#141414;--muted:#5A6E50;--dim:#9DC183;
+  --ok:#5A7A42;--err:#E53E3E;--warn:#D97706;--info:#3B82F6;
+}
+
+/* 5. Coral Warm — enerjik, sıcak, kızıl-turuncu */
+[data-theme="coral"] {
+  --bg:#FFF8F5;--s1:#ffffff;--s2:#FFF0EA;--s3:#FFE4D8;
+  --border:rgba(200,80,60,0.15);--border2:rgba(200,80,60,0.25);
+  --accent:#FF6B6B;--a2:#FFDAB9;--a3:#AAF0D1;
+  --text:#141414;--muted:#9A5A50;--dim:#FFDAB9;
+  --ok:#2E9E68;--err:#E53E3E;--warn:#D97706;--info:#3B82F6;
+}
+
+/* 6. Deep Teal — fintech, profesyonel, koyu deniz yeşili */
+[data-theme="teal"] {
+  --bg:#F0F7F7;--s1:#ffffff;--s2:#E4F2F2;--s3:#D0E9E9;
+  --border:rgba(0,100,100,0.15);--border2:rgba(0,100,100,0.25);
+  --accent:#008080;--a2:#FF6B6B;--a3:#E6E6FA;
+  --text:#141414;--muted:#3A6A6A;--dim:#AAD8D8;
+  --ok:#008060;--err:#E53E3E;--warn:#D97706;--info:#3B82F6;
+}
+
+/* 7. Siyah — tam karanlık, sıfır renk */
+[data-theme="black"] {
+  --bg:#000000;--s1:#111111;--s2:#1A1A1A;--s3:#222222;
+  --border:rgba(255,255,255,0.08);--border2:rgba(255,255,255,0.15);
+  --accent:#FF6B6B;--a2:#AAF0D1;--a3:#E6E6FA;
+  --text:#F5F5F5;--muted:#777777;--dim:#333333;
+  --ok:#4ade80;--err:#f87171;--warn:#fbbf24;--info:#60a5fa;
+}
+
+/*
+ * Açık temalar için genel düzeltmeler
+ * --bg ve --s1 açık renk olduğundan bazı elementlerin
+ * default koyu renk varsayımları bozulur; bunlar düzeltilir.
+ */
+/* color-scheme: light → tarayıcı native form elemanlarını açık modda gösterir */
+[data-theme="lavender"],
+[data-theme="mint"],
+[data-theme="sage"],
+[data-theme="coral"],
+[data-theme="teal"] {
+  color-scheme: light;
+}
+
+/* Sidebar'a hafif gölge: açık arka planda kenarlık yeterince ayrışmaz */
+[data-theme="lavender"] .sidebar,
+[data-theme="mint"] .sidebar,
+[data-theme="sage"] .sidebar,
+[data-theme="coral"] .sidebar,
+[data-theme="teal"] .sidebar {
+  background: var(--s1);
+  border-right-color: var(--border);
+  box-shadow: 2px 0 12px rgba(0,0,0,0.06);
+}
+
+/* Form alanları: açık temada --s2 arka plan ve --border2 kenarlık zorla uygulanır */
+[data-theme="lavender"] input,
+[data-theme="mint"] input,
+[data-theme="sage"] input,
+[data-theme="coral"] input,
+[data-theme="teal"] input,
+[data-theme="lavender"] select,
+[data-theme="mint"] select,
+[data-theme="sage"] select,
+[data-theme="coral"] select,
+[data-theme="teal"] select,
+[data-theme="lavender"] textarea,
+[data-theme="mint"] textarea,
+[data-theme="sage"] textarea,
+[data-theme="coral"] textarea,
+[data-theme="teal"] textarea {
+  background: var(--s2);
+  border-color: var(--border2);
+  color: var(--text);
+}
+
+/* Log kutusu arka planı: açık temada --s2 yeterince okunabilir */
+[data-theme="lavender"] .logbox,
+[data-theme="mint"] .logbox,
+[data-theme="sage"] .logbox,
+[data-theme="coral"] .logbox,
+[data-theme="teal"] .logbox {
+  background: var(--s2);
+}
+
+/* Aktif nav butonu: açık temada degradeli vurgu yerine nötr karartma */
+[data-theme="lavender"] .nav-btn.active,
+[data-theme="mint"] .nav-btn.active,
+[data-theme="sage"] .nav-btn.active,
+[data-theme="coral"] .nav-btn.active,
+[data-theme="teal"] .nav-btn.active {
+  background: linear-gradient(135deg, rgba(0,0,0,.06), rgba(0,0,0,.03));
+  border-color: var(--border2);
+}

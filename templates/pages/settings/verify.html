@@ -1,0 +1,702 @@
+{% extends "pages/settings/base.html" %}
+{% set active_tab = 'verify' %}
+{% block title %}Liste Temizleme{% endblock %}
+{% block subtitle %}Mail listelerinizdeki geçersiz ve sahte adresleri tespit edin{% endblock %}
+
+{% block settings_content %}
+
+<!-- ── Yeni İş Başlat ─────────────────────────────────────────── -->
+<div class="card">
+    <div class="card-title">✅ Yeni Doğrulama İşi Başlat</div>
+
+    <div class="fg">
+        <div class="g2">
+            <div class="field">
+                <label>Kaynak Tablo</label>
+                <select id="v-table" onchange="onTableChange()">
+                    <option value="">— Tablo seçin —</option>
+                </select>
+            </div>
+            <div class="field">
+                <label>E-posta Kolonu</label>
+                <select id="v-col" disabled>
+                    <option value="">— Önce tablo seçin —</option>
+                </select>
+            </div>
+        </div>
+
+        <div class="g2">
+            <div class="field">
+                <label>Doğrulama Modu</label>
+                <select id="v-mode">
+                    <option value="format">⚡ Sadece Format (anlık)</option>
+                    <option value="mx" selected>🔍 Format + MX Kaydı (önerilen)</option>
+                    <option value="smtp">🔬 Format + MX + SMTP (derin, yavaş)</option>
+                </select>
+                <div style="font-size:11px;color:var(--muted);margin-top:5px" id="v-mode-hint">
+                    MX modu: DNS sorgusu yapar. ~100-500 ms/domain. Çoğu durum için yeterli.
+                </div>
+            </div>
+            <div class="field">
+                <label>Paralel Thread <span class="badge">1–20</span></label>
+                <input type="number" id="v-threads" value="10" min="1" max="20">
+                <div style="font-size:11px;color:var(--muted);margin-top:5px">
+                    Yüksek değer hızlı ama MX/SMTP modunda sunucuyu zorlayabilir.
+                </div>
+            </div>
+        </div>
+
+        <div class="field" style="max-width:420px">
+            <label>İş Adı (isteğe bağlı)</label>
+            <input type="text" id="v-job-name" placeholder="Örn: Nisan Listesi Temizleme">
+        </div>
+    </div>
+
+    <!-- Kural açıklaması -->
+    <div class="ib" style="margin-top:16px;display:flex;flex-direction:column;gap:6px;align-items:flex-start">
+        <div>⚠ Doğrulama tamamlandığında tabloya <code>is_valid</code> kolonu eklenir:</div>
+        <div style="font-size:11px;display:grid;grid-template-columns:auto 1fr;gap:4px 12px;align-items:center">
+            <code style="color:var(--ok)">1 — Geçerli</code>
+            <span style="color:var(--muted)">valid · typo_fixed · catch_all · no_infra · free_provider</span>
+            <code style="color:var(--err)">0 — Geçersiz</code>
+            <span style="color:var(--muted)">invalid_format · disposable · no_mx · invalid (SMTP 550) → Suppression'a eklenir</span>
+            <code style="color:var(--warn)">-1 — Riskli</code>
+            <span style="color:var(--muted)">unknown (SMTP belirsiz) · role_account (info@, admin@)</span>
+            <code style="color:var(--muted)">NULL</code>
+            <span style="color:var(--muted)">Henüz kontrol edilmedi</span>
+        </div>
+        <div style="font-size:11px;color:var(--muted);margin-top:2px">
+            🔍 <strong>MX modu:</strong> format+disposable+role+typo+MX+SPF/DMARC kontrolü yapar, SMTP bağlantısı kurmaz.<br>
+            🔬 <strong>SMTP modu:</strong> ek olarak catch-all tespiti ve gerçek RCPT doğrulaması yapar (yavaş, ~3-10sn/adres).
+        </div>
+    </div>
+
+    <div class="btn-row" style="margin-top:16px">
+        <button class="btn btn-primary" id="v-start-btn" onclick="startVerify()">
+            <div class="sp" id="v-sp"></div>
+            <span id="v-start-txt">🚀 Doğrulamayı Başlat</span>
+        </button>
+        <button class="btn btn-outline btn-sm" onclick="resetStuckJobs()"
+                style="font-size:11px;padding:4px 10px;opacity:0.7"
+                title="10 dakikadan uzun süredir takılı kalan işleri temizler">
+            🔄 Takılı İşleri Temizle
+        </button>
+        <button class="btn btn-danger" id="v-cancel-btn" onclick="cancelVerify()" style="display:none">
+            ⏹ Durdur
+        </button>
+    </div>
+</div>
+
+<!-- ── Canlı İlerleme ─────────────────────────────────────────── -->
+<div class="card" id="v-progress-card" style="display:none">
+    <div class="card-title">📊 Doğrulama İlerlemesi</div>
+
+    <div class="pstats" id="v-stats" style="flex-wrap:wrap;gap:10px">
+        <span class="ps-tot">Toplam: <strong id="vt-total">0</strong></span>
+        <span class="ps-ok">✓ Geçerli: <strong id="vt-valid">0</strong></span>
+        <span class="ps-err">✗ Geçersiz: <strong id="vt-invalid">0</strong></span>
+        <span style="color:var(--warn)">⚠ Riskli: <strong id="vt-unknown">0</strong></span>
+        <span style="color:var(--info)">🚫 Suppression: <strong id="vt-supp">0</strong></span>
+    </div>
+
+    <div class="prog-bg">
+        <div class="prog-fill" id="v-prog-fill"></div>
+    </div>
+    <div style="font-size:11px;color:var(--muted);margin-bottom:10px" id="v-prog-text">Başlatılıyor…</div>
+
+    <div class="logbox" id="v-logbox"></div>
+</div>
+
+<!-- ── SMTP Muaf Domainler ──────────────────────────────────────────── -->
+<div class="card">
+    <div class="card-title">🚫 SMTP Muaf Domainler
+        <span class="badge" style="margin-left:8px;font-size:10px">Sadece SMTP modunda geçerli</span>
+    </div>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:14px">
+        Bu domainlerdeki adresler SMTP bağlantısı kurulmadan <strong>MX sonucuyla</strong> değerlendirilir.
+        Gmail, Yahoo, Outlook gibi büyük servisler SMTP doğrulamasını bloke ettiğinden buraya eklenmeleri önerilir.
+    </div>
+    <div style="display:flex;gap:8px;margin-bottom:10px">
+        <input type="text" id="skip-new-domain" placeholder="örn: yahoo.com"
+               style="flex:1;padding:8px 12px;background:var(--s2);border:1px solid var(--border);
+                      border-radius:8px;color:var(--text);font-size:13px"
+               onkeydown="if(event.key==='Enter') addSkipDomain()">
+        <button class="btn btn-outline" onclick="addSkipDomain()">+ Ekle</button>
+    </div>
+    <div id="skip-domain-list" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px;min-height:28px">
+        <span style="color:var(--muted);font-size:12px">Yükleniyor...</span>
+    </div>
+    <div style="font-size:11px;color:var(--muted);margin-bottom:12px">
+        🔒 Yerleşik liste (düzenlenemez):
+        <span id="base-domains-summary"></span>
+    </div>
+    <div class="btn-row">
+        <button class="btn btn-primary" onclick="saveSkipDomains()">
+            <div class="sp" id="skip-sp"></div>
+            <span id="skip-save-txt">💾 Kaydet</span>
+        </button>
+    </div>
+    <div class="alert" id="skip-alert"></div>
+</div>
+
+<!-- ── Geçmiş İşler ───────────────────────────────────────────── -->
+<div class="card">
+    <div class="card-title">🕓 Geçmiş Doğrulama İşleri
+        <button class="btn btn-outline btn-sm" style="margin-left:auto" onclick="loadJobs()">🔄 Yenile</button>
+    </div>
+    <div class="tbl-wrap">
+        <table>
+            <thead>
+                <tr>
+                    <th>İş Adı</th><th>Tablo</th><th>Mod</th>
+                    <th>Toplam</th><th>✓ Geçerli</th><th>✗ Geçersiz</th>
+                    <th>⚠ Riskli</th><th>🚫 Supp.</th>
+                    <th>Kullanıcı</th><th>Durum</th><th>Tarih</th><th></th>
+                </tr>
+            </thead>
+            <tbody id="v-jobs-tbody">
+                <tr><td colspan="11" style="text-align:center;color:var(--muted);padding:20px">Yükleniyor…</td></tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+
+
+<!-- ── Temiz Tablo Modal ──────────────────────────────────────── -->
+<div id="export-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);
+     z-index:9999;align-items:center;justify-content:center">
+    <div style="background:var(--s1);border:1px solid var(--border);border-radius:12px;
+                padding:24px;width:420px;max-width:90vw">
+        <div style="font-size:15px;font-weight:500;margin-bottom:16px">📤 Temiz Tablo Oluştur</div>
+
+        <div style="font-size:12px;color:var(--muted);margin-bottom:14px" id="export-info"></div>
+
+        <div class="field" style="margin-bottom:12px">
+            <label style="font-size:12px">Yeni Tablo Adı <span style="color:var(--err)">*</span></label>
+            <input id="export-new-name" type="text" class="inp"
+                   placeholder="ornek: liste2024_temiz"
+                   style="font-family:monospace;font-size:13px">
+            <div style="font-size:11px;color:var(--muted);margin-top:4px">
+                Sadece harf, rakam ve _ kullanın. Boşluk ve Türkçe karakter olmaz.
+            </div>
+        </div>
+
+        <label style="display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:16px;cursor:pointer">
+            <input type="checkbox" id="export-include-risky">
+            <span>Riskli adresleri de dahil et
+                <span id="export-risky-count" style="font-size:11px;color:var(--warn)"></span>
+            </span>
+        </label>
+
+        <div id="export-alert" class="alert" style="display:none;margin-bottom:12px"></div>
+
+        <div style="display:flex;gap:8px;justify-content:flex-end">
+            <button class="btn btn-outline" onclick="closeExportModal()">İptal</button>
+            <button class="btn btn-primary" id="export-confirm-btn" onclick="confirmExport()">
+                <span id="export-btn-txt">✅ Oluştur</span>
+                <span id="export-sp" style="display:none" class="spinner"></span>
+            </button>
+        </div>
+    </div>
+</div>
+
+<script>
+// ── State ─────────────────────────────────────────────────────────
+let vPollTimer  = null;   // setInterval handle (ilerleme poll)
+let vTables     = [];     // Tablo listesi
+let vActiveJobId = null;  // Şu an izlenen job id
+
+// ── Init ──────────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+    loadTables();
+    loadJobs();
+    loadSkipDomains();
+    document.getElementById('v-mode').addEventListener('change', updateModeHint);
+    // Çalışan iş varsa job listesini 10sn'de bir otomatik güncelle
+    // Sekme gizli olduğunda gereksiz istek atmaz (visibilityState kontrolü)
+    setInterval(() => {
+        if (document.visibilityState === 'visible') loadJobs();
+    }, 10000);
+});
+
+// ── Tablo Listesi ─────────────────────────────────────────────────
+async function loadTables() {
+    const sel = document.getElementById('v-table');
+    sel.innerHTML = '<option value="">⏳ Yükleniyor…</option>';
+    try {
+        const r = await fetch('/api/list-tables');
+        const d = await r.json();
+        if (!d.success) {
+            sel.innerHTML = '<option value="">— Tablo yüklenemedi —</option>';
+            logVerify('❌ Tablo listesi alınamadı: ' + (d.message || 'DB bağlantısını kontrol edin.'), 'err');
+            showProgressCard(true);
+            return;
+        }
+        vTables = d.tables || [];
+        sel.innerHTML = '<option value="">— Tablo seçin —</option>';
+        if (vTables.length === 0) {
+            sel.innerHTML = '<option value="">— Henüz tablo yok —</option>';
+            logVerify('ℹ Veritabanında kullanıcı tablosu bulunamadı. Önce Veritabanı > Excel İçe Aktar ile liste ekleyin.', 'info');
+            showProgressCard(true);
+            return;
+        }
+        vTables.forEach(t => {
+            sel.innerHTML += `<option value="${esc(t.name)}">${esc(t.name)} (${t.row_count} satır)</option>`;
+        });
+    } catch(e) {
+        sel.innerHTML = '<option value="">— Bağlantı hatası —</option>';
+        logVerify('❌ Sunucuya bağlanılamadı: ' + e.message, 'err');
+        showProgressCard(true);
+    }
+}
+
+function onTableChange() {
+    const tname  = document.getElementById('v-table').value;
+    const colSel = document.getElementById('v-col');
+    colSel.innerHTML = '<option value="">— Kolon seçin —</option>';
+    colSel.disabled  = !tname;
+    if (!tname) return;
+    const tbl = vTables.find(t => t.name === tname);
+    if (!tbl) return;
+    tbl.columns.forEach(c => {
+        const sel = /mail|email|e_mail|eposta/i.test(c) ? 'selected' : '';
+        colSel.innerHTML += `<option value="${esc(c)}" ${sel}>${esc(c)}</option>`;
+    });
+    const nameInput = document.getElementById('v-job-name');
+    if (!nameInput.value)
+        nameInput.value = `${tname} — ${new Date().toLocaleDateString('tr-TR')} doğrulama`;
+}
+
+function updateModeHint() {
+    const hints = {
+        format: '⚡ Sadece regex format kontrolü. Milisaniyeler içinde tamamlanır.',
+        mx:     '🔍 DNS MX kaydı + SPF/DMARC sorgusu. ~100-500 ms/domain.',
+        smtp:   '🔬 Catch-all tespiti + SMTP RCPT. 3-10 sn/adres. Bazı sunucular reddeder.',
+    };
+    document.getElementById('v-mode-hint').textContent =
+        hints[document.getElementById('v-mode').value] || '';
+}
+
+// ── Doğrulamayı Kuyruğa Ekle ──────────────────────────────────────
+async function startVerify() {
+    const tableVal   = document.getElementById('v-table').value;
+    const colVal     = document.getElementById('v-col').value;
+    const modeVal    = document.getElementById('v-mode').value;
+    const threadsVal = parseInt(document.getElementById('v-threads').value) || 10;
+    const jobName    = document.getElementById('v-job-name').value.trim() ||
+                       `${tableVal} — doğrulama`;
+
+    if (!tableVal || !colVal) { alert('Tablo ve e-posta kolonu seçmelisiniz.'); return; }
+
+    setBtn(true);
+
+    const r = await fetch('/api/verify/start', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+            table_name: tableVal, email_col: colVal,
+            mode: modeVal, threads: threadsVal, job_name: jobName,
+        })
+    });
+    const d = await r.json();
+
+    if (!d.success) {
+        alert(d.message || 'Hata oluştu.');
+        setBtn(false);
+        return;
+    }
+
+    // Kuyruğa alındı — ilerleme kartını göster, polling başlat
+    vActiveJobId = d.job_id;
+    showProgressCard(true);
+    clearProgress();
+    logVerify(`✅ İş #${d.job_id} kuyruğa alındı — worker.py en geç 5 dakika içinde başlatacak.`, 'ok');
+    logVerify('ℹ Sekmeyi kapatabilirsiniz, iş arka planda çalışmaya devam eder.', 'info');
+    document.getElementById('v-cancel-btn').style.display = '';
+    setBtn(false);
+
+    // Her 5sn DB'den ilerlemeyi oku
+    startPolling(d.job_id);
+    loadJobs();
+}
+
+// ── Polling ───────────────────────────────────────────────────────
+function startPolling(jobId) {
+    stopPolling();
+    vPollTimer = setInterval(() => pollJob(jobId), 3000);  // 3sn — daha sık güncelleme
+}
+
+function stopPolling() {
+    if (vPollTimer) { clearInterval(vPollTimer); vPollTimer = null; }
+}
+
+async function pollJob(jobId) {
+    try {
+        const r = await fetch(`/api/verify/jobs/${jobId}`);
+        const d = await r.json();
+        if (!d.success || !d.data) return;
+        const j = d.data;
+
+        // İstatistikleri güncelle
+        document.getElementById('vt-total').textContent   = j.total_count;
+        document.getElementById('vt-valid').textContent   = j.valid_count;
+        document.getElementById('vt-invalid').textContent = j.invalid_count;
+        document.getElementById('vt-unknown').textContent = j.unknown_count;
+        document.getElementById('vt-supp').textContent    = j.suppressed_count;
+
+        const pct = j.total_count > 0
+            ? Math.round(j.processed_count / j.total_count * 100) : 0;
+        document.getElementById('v-prog-fill').style.width = pct + '%';
+
+        const statusLabel = {
+            pending:   '⏳ Worker bekliyor…',
+            running:   `🔄 İşleniyor — ${j.processed_count} / ${j.total_count} (${pct}%)`,
+            done:      '✅ Tamamlandı',
+            cancelled: '⏹ İptal edildi',
+        };
+        document.getElementById('v-prog-text').textContent =
+            statusLabel[j.status] || j.status;
+
+        if (j.status === 'done') {
+            stopPolling();
+            document.getElementById('v-cancel-btn').style.display = 'none';
+            const validPct = j.total_count > 0
+                ? Math.round(j.valid_count / j.total_count * 100) : 0;
+            logVerify(`✅ Tamamlandı — ${j.total_count} adres işlendi`, 'ok');
+            logVerify(`✓ ${j.valid_count} geçerli (%${validPct}) · ✗ ${j.invalid_count} geçersiz · ⚠ ${j.unknown_count} riskli`, 'ok');
+            if (j.suppressed_count > 0)
+                logVerify(`🚫 ${j.suppressed_count} adres Suppression listesine eklendi`, 'err');
+            loadJobs();
+            vActiveJobId = null;
+        } else if (j.status === 'cancelled') {
+            stopPolling();
+            document.getElementById('v-cancel-btn').style.display = 'none';
+            logVerify(`⏹ İptal edildi — ${j.processed_count} adres işlenebildi`, 'skip');
+            loadJobs();
+            vActiveJobId = null;
+        }
+    } catch(e) { console.warn('Poll hatası:', e); }
+}
+
+async function cancelVerify() {
+    if (!vActiveJobId) return;
+    if (!confirm('Doğrulama işi iptal edilsin mi? Worker bir sonraki döngüde durduracak.')) return;
+    await fetch(`/api/verify/cancel/${vActiveJobId}`, {method: 'POST'});
+    logVerify('⏹ İptal isteği gönderildi — worker bir sonraki döngüde duracak.', 'skip');
+    stopPolling();
+    document.getElementById('v-cancel-btn').style.display = 'none';
+    loadJobs();
+    vActiveJobId = null;
+}
+
+// ── Geçmiş İşler ─────────────────────────────────────────────────
+async function loadJobs() {
+    try {
+        const r = await fetch('/api/verify/jobs');
+        const d = await r.json();
+        const tbody = document.getElementById('v-jobs-tbody');
+        if (!d.success || !d.data?.length) {
+            tbody.innerHTML = '<tr><td colspan="11" style="text-align:center;color:var(--muted);padding:16px">Henüz doğrulama yapılmadı.</td></tr>';
+            return;
+        }
+        const modeLabel  = {format:'⚡ Format', mx:'🔍 MX', smtp:'🔬 SMTP'};
+        const statusCls  = {pending:'chip-skip',running:'chip-on',done:'chip-ok',cancelled:'chip-off'};
+
+        tbody.innerHTML = d.data.map(j => {
+            const pct  = j.total_count > 0
+                ? Math.round(j.processed_count / j.total_count * 100) : 0;
+            const bar  = j.status === 'running'
+                ? `<div class="prog-bg" style="margin-top:4px;height:4px">
+                       <div class="prog-fill" style="width:${pct}%"></div>
+                   </div>` : '';
+            const statusLbl = {
+                pending:   '⏳ Bekliyor',
+                running:   `🔄 Çalışıyor %${pct}`,
+                done:      '✅ Tamamlandı',
+                cancelled: '⏹ İptal',
+            };
+            const dt   = j.created_at ? j.created_at.replace('T',' ').substring(0,16) : '—';
+            const cancelBtn = (j.status === 'pending' || j.status === 'running')
+                ? `<button class="btn btn-danger btn-sm" style="margin-left:6px"
+                       onclick="quickCancel(${j.id})">⏹</button>` : '';
+            // Tamamlanmış işler için temiz tablo üret butonu
+            const exportBtn = j.status === 'done' && j.valid_count > 0
+                ? `<button class="btn btn-outline btn-sm" style="font-size:11px;padding:3px 8px;white-space:nowrap"
+                       onclick="openExportModal('${esc(j.table_name)}', ${j.valid_count}, ${j.unknown_count})"
+                       title="Geçerli adreslerden yeni tablo oluştur">
+                       📤 Temiz Tablo
+                   </button>` : '';
+
+            return `<tr>
+                <td style="font-size:12px;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(j.job_name)}">${esc(j.job_name)}</td>
+                <td style="font-size:11px"><code>${esc(j.table_name)}</code></td>
+                <td style="font-size:11px">${modeLabel[j.mode]||j.mode}</td>
+                <td style="font-size:12px;text-align:right">${j.total_count}</td>
+                <td style="font-size:12px;text-align:right;color:var(--ok)">${j.valid_count}</td>
+                <td style="font-size:12px;text-align:right;color:var(--err)">${j.invalid_count}</td>
+                <td style="font-size:12px;text-align:right;color:var(--warn)">${j.unknown_count}</td>
+                <td style="font-size:12px;text-align:right;color:var(--info)">${j.suppressed_count}</td>
+                <td style="font-size:11px;color:var(--muted)">${j.created_by?'👤 '+esc(j.created_by):'—'}</td>
+                <td>${bar}<span class="chip ${statusCls[j.status]||'chip-off'}">${statusLbl[j.status]||j.status}</span>${cancelBtn}</td>
+                <td style="font-size:11px;color:var(--muted);white-space:nowrap">${dt}</td>
+                <td>${exportBtn}</td>
+            </tr>`;
+        }).join('');
+
+        // Çalışan iş var — polling başlat ve istatistikleri hemen göster
+        const running = d.data.find(j => j.status === 'running' || j.status === 'pending');
+        if (running) {
+            // İstatistikleri üst karta hemen yansıt (poll beklemeden)
+            document.getElementById('vt-total').textContent     = running.total_count   || 0;
+            document.getElementById('vt-valid').textContent     = running.valid_count   || 0;
+            document.getElementById('vt-invalid').textContent   = running.invalid_count || 0;
+            document.getElementById('vt-unknown').textContent   = running.unknown_count || 0;
+            document.getElementById('vt-supp').textContent      = running.suppressed_count || 0;
+            const pct = running.total_count > 0
+                ? Math.round(running.processed_count / running.total_count * 100) : 0;
+            document.getElementById('v-prog-fill').style.width = pct + '%';
+            const statusLabel = {
+                pending: '⏳ Worker bekliyor…',
+                running: `🔄 İşleniyor — ${running.processed_count || 0} / ${running.total_count} (${pct}%)`,
+            };
+            document.getElementById('v-prog-text').textContent =
+                statusLabel[running.status] || running.status;
+            if (!vPollTimer) {
+                vActiveJobId = running.id;
+                showProgressCard(true);
+                startPolling(running.id);
+                document.getElementById('v-cancel-btn').style.display = '';
+            }
+        }
+    } catch(e) { console.warn('Jobs yüklenemedi:', e); }
+}
+
+// ── Temiz Tablo Export ────────────────────────────────────────────
+let _exportSourceTable = '';
+
+function openExportModal(tableName, validCount, riskyCount) {
+    _exportSourceTable = tableName;
+    // Öneri isim: orijinal_temiz formatında
+    const suggested = tableName.replace(/[^a-zA-Z0-9_]/g, '_') + '_temiz';
+    document.getElementById('export-new-name').value = suggested;
+    document.getElementById('export-info').textContent =
+        `Kaynak: ${tableName}  ·  ${validCount.toLocaleString()} geçerli adres kopyalanacak`;
+    document.getElementById('export-risky-count').textContent =
+        riskyCount > 0 ? `(+${riskyCount.toLocaleString()} riskli)` : '';
+    document.getElementById('export-include-risky').checked = false;
+    document.getElementById('export-alert').style.display = 'none';
+    document.getElementById('export-modal').style.display = 'flex';
+    setTimeout(() => document.getElementById('export-new-name').focus(), 50);
+}
+
+function closeExportModal() {
+    document.getElementById('export-modal').style.display = 'none';
+}
+
+// ESC tuşuyla kapat
+document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') closeExportModal();
+});
+
+async function confirmExport() {
+    const newName       = document.getElementById('export-new-name').value.trim();
+    const includeRisky  = document.getElementById('export-include-risky').checked;
+    const alertEl       = document.getElementById('export-alert');
+    const btn           = document.getElementById('export-confirm-btn');
+    const btnTxt        = document.getElementById('export-btn-txt');
+    const sp            = document.getElementById('export-sp');
+
+    // Basit validasyon — harf, rakam, _ izinli
+    if (!newName) {
+        alertEl.className = 'alert alert-err';
+        alertEl.style.display = 'block';
+        alertEl.textContent = 'Tablo adı boş olamaz.';
+        return;
+    }
+    if (!/^[a-zA-Z_][a-zA-Z0-9_]{0,63}$/.test(newName)) {
+        alertEl.className = 'alert alert-err';
+        alertEl.style.display = 'block';
+        alertEl.textContent = 'Geçersiz tablo adı. Sadece harf, rakam ve _ kullanın, rakamla başlamayın.';
+        return;
+    }
+
+    btn.disabled = true;
+    btnTxt.textContent = 'Oluşturuluyor…';
+    sp.style.display = 'inline-block';
+    alertEl.style.display = 'none';
+
+    try {
+        const r = await fetch('/api/verify/export-clean', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                source_table:   _exportSourceTable,
+                new_table_name: newName,
+                include_risky:  includeRisky,
+            }),
+        });
+        const d = await r.json();
+
+        if (d.success) {
+            closeExportModal();
+            // Başarı bildirimi
+            setTimeout(() => {
+                alert(`✅ ${d.message}\n\nToplu Gönderim sayfasında bu tabloyu seçebilirsiniz.`);
+            }, 100);
+        } else {
+            alertEl.className = 'alert alert-err';
+            alertEl.style.display = 'block';
+            alertEl.textContent = d.message || 'Bir hata oluştu.';
+            btn.disabled = false;
+            btnTxt.textContent = '✅ Oluştur';
+            sp.style.display = 'none';
+        }
+    } catch(e) {
+        alertEl.className = 'alert alert-err';
+        alertEl.style.display = 'block';
+        alertEl.textContent = 'Bağlantı hatası: ' + e;
+        btn.disabled = false;
+        btnTxt.textContent = '✅ Oluştur';
+        sp.style.display = 'none';
+    }
+}
+
+window.openExportModal  = openExportModal;
+window.closeExportModal = closeExportModal;
+window.confirmExport    = confirmExport;
+
+async function resetStuckJobs() {
+    const r = await fetch('/api/verify/reset-stuck', {method:'POST'});
+    const d = await r.json();
+    alert(d.success ? (d.message || 'Takılı işler temizlendi.') : ('Hata: ' + d.message));
+    loadJobs();
+}
+
+async function quickCancel(jobId) {
+    if (!confirm('Bu iş iptal edilsin mi?')) return;
+    await fetch(`/api/verify/cancel/${jobId}`, {method:'POST'});
+    loadJobs();
+    if (vActiveJobId === jobId) { stopPolling(); vActiveJobId = null; }
+}
+
+// ── UI Yardımcıları ───────────────────────────────────────────────
+function setBtn(loading) {
+    const btn = document.getElementById('v-start-btn');
+    const sp  = document.getElementById('v-sp');
+    const txt = document.getElementById('v-start-txt');
+    btn.disabled     = loading;
+    sp.style.display = loading ? 'block' : 'none';
+    txt.textContent  = loading ? 'Kuyruğa ekleniyor…' : '🚀 Doğrulamayı Başlat';
+}
+
+function showProgressCard(show) {
+    document.getElementById('v-progress-card').style.display = show ? '' : 'none';
+}
+
+function clearProgress() {
+    ['vt-valid','vt-invalid','vt-unknown','vt-supp','vt-total'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.textContent = '0';
+    });
+    const fill = document.getElementById('v-prog-fill');
+    if (fill) fill.style.width = '0%';
+    const txt = document.getElementById('v-prog-text');
+    if (txt) txt.textContent = '⏳ Worker bekleniyor…';
+    const lb = document.getElementById('v-logbox');
+    if (lb) lb.innerHTML = '';
+}
+
+function logVerify(msg, cls = 'info') {
+    const box = document.getElementById('v-logbox');
+    if (!box) return;
+    const clsMap = {ok:'l-ok', err:'l-err', skip:'l-skip', info:'l-info'};
+    const ts = new Date().toLocaleTimeString('tr-TR');
+    box.innerHTML += `<div class="${clsMap[cls]||'l-info'}">[${ts}] ${msg}</div>`;
+    box.scrollTop  = box.scrollHeight;
+}
+
+
+// ── SMTP Muaf Domainler ─────────────────────────────────────────
+let vSkipDomains = [];
+
+async function loadSkipDomains() {
+    try {
+        const r = await fetch('/api/verify/smtp-skip');
+        const d = await r.json();
+        if (!d.success) return;
+        vSkipDomains = d.user_domains || [];
+        renderSkipDomains();
+        const base = d.base_domains || [];
+        const el = document.getElementById('base-domains-summary');
+        if (el) el.textContent = base.slice(0,5).join(', ') + (base.length > 5 ? ' +' + (base.length-5) + ' daha' : '');
+    } catch(e) { console.warn('Skip domains yüklenemedi:', e); }
+}
+
+function renderSkipDomains() {
+    const el = document.getElementById('skip-domain-list');
+    if (!el) return;
+    if (!vSkipDomains.length) {
+        el.innerHTML = '<span style="color:var(--muted);font-size:12px">Henüz eklenmedi.</span>';
+        return;
+    }
+    el.innerHTML = vSkipDomains.map(function(d) {
+        return '<span style="display:inline-flex;align-items:center;gap:4px;padding:3px 10px;background:var(--s2);border:1px solid var(--border);border-radius:20px;font-size:12px">'
+            + esc(d)
+            + '<button onclick="removeSkipDomain(\'' + esc(d) + '\')" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:13px;padding:0 2px">x</button>'
+            + '</span>';
+    }).join('');
+}
+
+function addSkipDomain() {
+    const inp = document.getElementById('skip-new-domain');
+    const val = inp.value.trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/.*$/, '');
+    if (!val || !val.includes('.')) {
+        inp.style.borderColor = 'var(--err)';
+        setTimeout(() => inp.style.borderColor = '', 1500);
+        return;
+    }
+    if (!vSkipDomains.includes(val)) {
+        vSkipDomains.push(val);
+        renderSkipDomains();
+    }
+    inp.value = '';
+    inp.focus();
+}
+
+function removeSkipDomain(domain) {
+    vSkipDomains = vSkipDomains.filter(d => d !== domain);
+    renderSkipDomains();
+}
+
+async function saveSkipDomains() {
+    const sp  = document.getElementById('skip-sp');
+    const txt = document.getElementById('skip-save-txt');
+    const al  = document.getElementById('skip-alert');
+    sp.style.display = 'block'; txt.textContent = 'Kaydediliyor...'; al.className = 'alert';
+    try {
+        const r = await fetch('/api/verify/smtp-skip', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({domains: vSkipDomains})
+        });
+        const d = await r.json();
+        al.textContent = d.message;
+        al.className   = d.success ? 'alert ok show' : 'alert err show';
+        if (d.success) setTimeout(() => al.className = 'alert', 3000);
+    } catch(e) {
+        al.textContent = 'Baglanti hatasi.';
+        al.className   = 'alert err show';
+    } finally {
+        sp.style.display = 'none'; txt.textContent = 'Kaydet';
+    }
+}
+
+function esc(s) {
+    return String(s??'')
+        .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+        .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+</script>
+
+{% endblock %}
+

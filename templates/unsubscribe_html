@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1.0">
+    <title>Abonelikten Çık - MailSender Pro</title>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg: #07070d;
+            --s1: #0f0f18;
+            --border: rgba(130,130,220,0.1);
+            --accent: #7c6ffd;
+            --text: #e2e2f0;
+            --ok: #4ade80;
+        }
+        body {
+            font-family: 'DM Sans', sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            margin: 0;
+            padding: 20px;
+        }
+        .card {
+            background: var(--s1);
+            border: 1px solid var(--border);
+            border-radius: 24px;
+            padding: 40px;
+            max-width: 500px;
+            text-align: center;
+        }
+        h1 {
+            font-size: 28px;
+            margin-bottom: 20px;
+        }
+        p {
+            color: #6b6b8a;
+            margin-bottom: 30px;
+            line-height: 1.6;
+        }
+        .email {
+            background: rgba(124,111,253,0.1);
+            padding: 8px 16px;
+            border-radius: 99px;
+            color: var(--accent);
+            font-weight: 600;
+            margin-bottom: 30px;
+            display: inline-block;
+        }
+        button {
+            background: linear-gradient(135deg, var(--accent), #f472b6);
+            color: white;
+            border: none;
+            padding: 14px 28px;
+            border-radius: 12px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: opacity 0.2s;
+        }
+        button:hover {
+            opacity: 0.9;
+        }
+        .success {
+            color: var(--ok);
+            font-size: 48px;
+            margin-bottom: 20px;
+        }
+        .hidden {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <div id="initial">
+            <h1>📧 Abonelikten Çık</h1>
+            <p><strong id="email-display">{{ email }}</strong> adresine gönderilen e-postaları artık almak istemiyor musunuz?</p>
+            <div class="email">{{ email }}</div>
+            <button onclick="unsubscribe()">Evet, aboneliğimi sonlandır</button>
+        </div>
+        
+        <div id="success" class="hidden">
+            <div class="success">✓</div>
+            <h1>İşlem Başarılı</h1>
+            <p>Aboneliğiniz sonlandırıldı. Artık bu adrese e-posta gönderilmeyecek.</p>
+        </div>
+        
+        <div id="error" class="hidden">
+            <div style="color: #f87171; font-size: 48px; margin-bottom: 20px;">✗</div>
+            <h1>Bir Hata Oluştu</h1>
+            <p id="error-message"></p>
+        </div>
+    </div>
+
+    <script>
+        const email = new URLSearchParams(window.location.search).get('email');
+        
+        async function unsubscribe() {
+            document.querySelector('button').disabled = true;
+            document.querySelector('button').textContent = 'İşleniyor...';
+            
+            try {
+                const response = await fetch('/api/unsubscribe', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({email: email})
+                });
+                const data = await response.json();
+                
+                if (data.success) {
+                    document.getElementById('initial').classList.add('hidden');
+                    document.getElementById('success').classList.remove('hidden');
+                } else {
+                    document.getElementById('initial').classList.add('hidden');
+                    document.getElementById('error').classList.remove('hidden');
+                    document.getElementById('error-message').textContent = data.message;
+                }
+            } catch (e) {
+                document.getElementById('initial').classList.add('hidden');
+                document.getElementById('error').classList.remove('hidden');
+                document.getElementById('error-message').textContent = 'Bağlantı hatası';
+            }
+        }
+    </script>
+</body>
+</html>

@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Giriş — MailSender Pro</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Mono&display=swap" rel="stylesheet">
+    <style>
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+        :root {
+            --bg: #0f1117; --s1: #161b22; --s2: #1c2230;
+            --border: rgba(255,255,255,.08); --text: #e6edf3; --muted: #7d8590;
+            --accent: #6366f1; --accent-h: #4f46e5;
+            --ok: #34d399; --err: #f87171; --r: 10px;
+        }
+        body { background: var(--bg); color: var(--text); font-family: 'Inter', sans-serif;
+               min-height: 100vh; display: flex; align-items: center; justify-content: center; }
+        .login-wrap { width: 100%; max-width: 380px; padding: 24px; }
+        .logo { text-align: center; margin-bottom: 32px; }
+        .logo-icon { font-size: 40px; display: block; margin-bottom: 8px; }
+        .logo h1 { font-size: 20px; font-weight: 700; letter-spacing: -.3px; }
+        .logo p { font-size: 12px; color: var(--muted); margin-top: 4px; }
+        .card { background: var(--s1); border: 1px solid var(--border); border-radius: var(--r); padding: 28px; }
+        .field { margin-bottom: 16px; }
+        label { display: block; font-size: 12px; font-weight: 500; color: var(--muted);
+                margin-bottom: 6px; letter-spacing: .3px; text-transform: uppercase; }
+        input { width: 100%; background: var(--s2); border: 1px solid var(--border);
+                border-radius: 7px; padding: 10px 14px; color: var(--text);
+                font-size: 14px; font-family: inherit; outline: none; transition: border-color .2s; }
+        input:focus { border-color: var(--accent); }
+        .pw-wrap { position: relative; }
+        .pw-wrap input { padding-right: 40px; }
+        .pw-eye { position: absolute; right: 10px; top: 50%; transform: translateY(-50%);
+                  background: none; border: none; cursor: pointer; font-size: 16px;
+                  color: var(--muted); padding: 4px; }
+        .btn-login { width: 100%; padding: 11px; background: var(--accent); border: none;
+                     border-radius: 7px; color: #fff; font-size: 14px; font-weight: 600;
+                     cursor: pointer; transition: background .2s; display: flex;
+                     align-items: center; justify-content: center; gap: 8px; margin-top: 4px; }
+        .btn-login:hover { background: var(--accent-h); }
+        .btn-login:disabled { opacity: .6; cursor: not-allowed; }
+        .alert { margin-top: 14px; padding: 10px 14px; border-radius: 7px; font-size: 13px;
+                 display: none; }
+        .alert.err { background: rgba(248,113,113,.1); border: 1px solid rgba(248,113,113,.3); color: var(--err); }
+        .sp { width: 14px; height: 14px; border: 2px solid rgba(255,255,255,.3);
+              border-top-color: #fff; border-radius: 50%; animation: spin .7s linear infinite; display: none; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .setup-note { margin-top: 16px; text-align: center; font-size: 12px; color: var(--muted); }
+    </style>
+</head>
+<body>
+<div class="login-wrap">
+    <div class="logo">
+        <span class="logo-icon">✉️</span>
+        <h1>MailSender Pro</h1>
+        <p>Güvenli giriş yapın</p>
+    </div>
+    <div class="card">
+        <div class="field">
+            <label>Kullanıcı Adı</label>
+            <input type="text" id="username" placeholder="kullanici_adi" autocomplete="username" autofocus>
+        </div>
+        <div class="field">
+            <label>Şifre</label>
+            <div class="pw-wrap">
+                <input type="password" id="password" placeholder="••••••••" autocomplete="current-password"
+                       onkeydown="if(event.key==='Enter') doLogin()">
+                <button class="pw-eye" onclick="togglePw('password',this)" type="button">👁</button>
+            </div>
+        </div>
+        <div style="text-align:right;margin-bottom:10px;margin-top:-6px">
+            <a href="/auth/forgot-password"
+               style="font-size:12px;color:var(--muted);text-decoration:none;
+                      transition:color .15s"
+               onmouseover="this.style.color='var(--accent)'"
+               onmouseout="this.style.color='var(--muted)'">
+               Şifremi unuttum →
+            </a>
+        </div>
+        <button class="btn-login" onclick="doLogin()" id="login-btn">
+            <div class="sp" id="login-sp"></div>
+            <span id="login-txt">🔐 Giriş Yap</span>
+        </button>
+        <div class="alert err" id="login-alert"></div>
+    </div>
+    {% if setup_mode %}
+    <div class="setup-note">⚙️ İlk kurulum: Admin hesabı oluşturulacak</div>
+    {% endif %}
+</div>
+<script>
+function togglePw(id, btn) {
+    const inp = document.getElementById(id);
+    inp.type = inp.type === 'password' ? 'text' : 'password';
+    btn.textContent = inp.type === 'password' ? '👁' : '🙈';
+}
+async function doLogin() {
+    const username = document.getElementById('username').value.trim();
+    const password = document.getElementById('password').value;
+    const alert_el = document.getElementById('login-alert');
+    const btn      = document.getElementById('login-btn');
+    const sp       = document.getElementById('login-sp');
+    const txt      = document.getElementById('login-txt');
+
+    alert_el.style.display = 'none';
+    if (!username || !password) {
+        alert_el.textContent = 'Kullanıcı adı ve şifre gerekli.';
+        alert_el.style.display = 'block'; return;
+    }
+    btn.disabled = true; sp.style.display = 'block'; txt.textContent = 'Giriş yapılıyor...';
+    try {
+        const d = await (await fetch('/auth/login', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({username, password})
+        })).json();
+        if (d.success) {
+            window.location.href = d.redirect || '/';
+        } else {
+            alert_el.textContent = d.message || 'Giriş başarısız.';
+            alert_el.style.display = 'block';
+        }
+    } catch(e) {
+        alert_el.textContent = 'Bağlantı hatası.';
+        alert_el.style.display = 'block';
+    } finally {
+        btn.disabled = false; sp.style.display = 'none'; txt.textContent = '🔐 Giriş Yap';
+    }
+}
+</script>
+</body>
+</html>

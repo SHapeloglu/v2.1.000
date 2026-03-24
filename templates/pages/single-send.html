@@ -1,0 +1,232 @@
+{% extends "base.html" %}
+
+{% block title %}Tek Mail Gönder{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>✉ Tek Mail Gönder</h1>
+    <p>Bir alıcıya hızlıca mail gönderin. {{degisken}} ile kişiselleştirme desteklenir.</p>
+</div>
+
+<div class="card">
+    <div class="card-title">Gönderici & Alıcı</div>
+    <div class="fg">
+        <div class="g2">
+            <div class="field"><label>Gönderici <span style="color:var(--err)">*</span></label><select id="c-sender"><option value="">— Gönderici seç —</option></select></div>
+            <div class="field"><label>Alıcı E-posta <span style="color:var(--err)">*</span></label><input id="c-to" placeholder="alici@ornek.com" type="email"></div>
+        </div>
+
+        <!-- Konu alanı — şablon seçici butonu ile -->
+        <div class="field">
+            <label style="display:flex;align-items:center;justify-content:space-between">
+                <span>Konu <span style="color:var(--err)">*</span></span>
+                <button type="button" class="btn btn-outline btn-sm"
+                        onclick="openTplPicker('subject')"
+                        title="Kayıtlı konulardan seç">
+                    📌 Konu Şablonu Seç
+                </button>
+            </label>
+            <input id="c-subject" placeholder="E-posta konusu...">
+        </div>
+
+        <div class="toggle-row">
+            <span class="tgl-label">HTML modu — HTML içerik düzgün görüntülenir</span>
+            <label class="tgl"><input type="checkbox" id="c-html" checked><span class="tgl-sl"></span></label>
+        </div>
+
+        <!-- Mesaj alanı — şablon seçici butonu ile -->
+        <div class="field">
+            <label style="display:flex;align-items:center;justify-content:space-between">
+                <span>Mesaj <span style="color:var(--err)">*</span></span>
+                <button type="button" class="btn btn-outline btn-sm"
+                        onclick="openTplPicker('body')"
+                        title="Kayıtlı mesajlardan seç">
+                    📄 Mesaj Şablonu Seç
+                </button>
+            </label>
+            <textarea id="c-body" placeholder="<p>Mesajınız...</p>"></textarea>
+        </div>
+
+        <!-- Mevcut değerleri şablon olarak kaydet -->
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <button type="button" class="btn btn-outline btn-sm" onclick="saveCurrentAsTemplate('subject')">
+                💾 Konuyu Şablon Olarak Kaydet
+            </button>
+            <button type="button" class="btn btn-outline btn-sm" onclick="saveCurrentAsTemplate('body')">
+                💾 Mesajı Şablon Olarak Kaydet
+            </button>
+        </div>
+
+        <div class="field"><label>Ek Dosya</label>
+            <div class="fup" onclick="document.getElementById('c-file').click()">
+                <input type="file" id="c-file" onchange="showFn(this,'c-fn')">
+                <div class="fup-icon">📎</div><div class="fup-txt"><strong>Dosya seç</strong></div>
+                <div id="c-fn" class="fup-name"></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div style="margin-bottom:14px">
+    <label style="display:flex;align-items:center;gap:10px;cursor:pointer;font-size:13px">
+        <input type="checkbox" id="c-unsub" style="width:16px;height:16px;cursor:pointer">
+        <span>📧 Her mailin altına listeden çıkma linki ekle</span>
+    </label>
+</div>
+<button class="btn btn-primary btn-full" onclick="sendSingle()"><div class="sp" id="c-sp"></div><span id="c-btn-txt">E-posta Gönder →</span></button>
+<div class="alert" id="c-alert"></div>
+
+<!-- ── Şablon Seçici Modal ──────────────────────────────────────────── -->
+<div id="tpl-picker-overlay"
+     style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:1000;
+            align-items:center;justify-content:center"
+     onclick="if(event.target===this) closeTplPicker()">
+    <div style="background:var(--s1);border:1px solid var(--border);border-radius:var(--r2);
+                width:90%;max-width:560px;max-height:80vh;display:flex;flex-direction:column;
+                box-shadow:0 20px 60px rgba(0,0,0,.4)">
+
+        <!-- Modal başlık -->
+        <div style="padding:18px 24px;border-bottom:1px solid var(--border);
+                    display:flex;align-items:center;justify-content:space-between">
+            <strong id="tpl-picker-title" style="font-size:14px">Şablon Seç</strong>
+            <button onclick="closeTplPicker()"
+                    style="background:none;border:none;color:var(--muted);font-size:20px;cursor:pointer">✕</button>
+        </div>
+
+        <!-- Arama kutusu -->
+        <div style="padding:12px 24px;border-bottom:1px solid var(--border)">
+            <input id="tpl-picker-search"
+                   placeholder="Şablon adı ara..."
+                   oninput="filterTplPicker(this.value)"
+                   style="width:100%">
+        </div>
+
+        <!-- Şablon listesi -->
+        <div id="tpl-picker-list"
+             style="flex:1;overflow-y:auto;padding:12px 24px">
+            <div style="text-align:center;color:var(--muted);padding:20px">Yükleniyor...</div>
+        </div>
+
+        <!-- Alt butonlar -->
+        <div style="padding:14px 24px;border-top:1px solid var(--border);
+                    display:flex;justify-content:flex-end;gap:8px">
+            <a href="/settings/templates" target="_blank"
+               style="font-size:12px;color:var(--accent);text-decoration:none;
+                      display:flex;align-items:center;gap:4px;margin-right:auto">
+                ⚙️ Şablonları Yönet
+            </a>
+            <button class="btn btn-outline btn-sm" onclick="closeTplPicker()">İptal</button>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        loadSenderSelects();
+    });
+
+    /* ── Şablon Seçici ──────────────────────────────────────────── */
+    let _tplPickerTarget = 'subject';
+    let _tplPickerItems  = [];
+
+    async function openTplPicker(type) {
+        _tplPickerTarget = type;
+        document.getElementById('tpl-picker-title').textContent =
+            type === 'subject' ? '📌 Konu Şablonu Seç' : '📄 Mesaj Şablonu Seç';
+        document.getElementById('tpl-picker-search').value = '';
+        document.getElementById('tpl-picker-overlay').style.display = 'flex';
+        try {
+            const d = await (await fetch(`/api/templates?type=${type}`)).json();
+            _tplPickerItems = d.success ? d.data : [];
+            renderTplPickerList(_tplPickerItems);
+        } catch(e) {
+            document.getElementById('tpl-picker-list').innerHTML =
+                '<div style="color:var(--err)">Yüklenemedi: ' + e + '</div>';
+        }
+        setTimeout(() => document.getElementById('tpl-picker-search').focus(), 100);
+    }
+
+    function closeTplPicker() {
+        document.getElementById('tpl-picker-overlay').style.display = 'none';
+    }
+
+    function filterTplPicker(q) {
+        const filtered = q
+            ? _tplPickerItems.filter(t =>
+                t.name.toLowerCase().includes(q.toLowerCase()) ||
+                t.content.toLowerCase().includes(q.toLowerCase()))
+            : _tplPickerItems;
+        renderTplPickerList(filtered);
+    }
+
+    function renderTplPickerList(items) {
+        const wrap = document.getElementById('tpl-picker-list');
+        if (!items.length) {
+            wrap.innerHTML = '<div style="text-align:center;color:var(--muted);padding:24px">' +
+                'Şablon bulunamadı. <a href="/settings/templates" target="_blank" ' +
+                'style="color:var(--accent)">Şablon ekle →</a></div>';
+            return;
+        }
+        wrap.innerHTML = items.map(t => `
+        <div onclick="selectTpl(${t.id})"
+             style="padding:12px 14px;border-radius:var(--r);border:1px solid var(--border);
+                    margin-bottom:8px;cursor:pointer;transition:all .15s"
+             onmouseover="this.style.borderColor='var(--accent)';this.style.background='var(--s2)'"
+             onmouseout="this.style.borderColor='var(--border)';this.style.background=''">
+            <div style="font-weight:600;font-size:13px;margin-bottom:4px">${esc(t.name)}</div>
+            <div style="font-size:12px;color:var(--muted);overflow:hidden;
+                        text-overflow:ellipsis;white-space:nowrap;max-width:460px">
+                ${esc(t.content.slice(0, 100))}${t.content.length > 100 ? '…' : ''}
+            </div>
+        </div>`).join('');
+    }
+
+    async function selectTpl(id) {
+        try {
+            const d = await (await fetch(`/api/templates/${id}`)).json();
+            if (!d.success) { alert('Şablon yüklenemedi.'); return; }
+            const tpl = d.data;
+            if (_tplPickerTarget === 'subject') {
+                document.getElementById('c-subject').value = tpl.content;
+            } else {
+                document.getElementById('c-body').value = tpl.content;
+            }
+            closeTplPicker();
+        } catch(e) {
+            alert('Hata: ' + e);
+        }
+    }
+
+    /* ── Mevcut değeri şablon olarak kaydet ────────────────────── */
+    async function saveCurrentAsTemplate(type) {
+        const content = type === 'subject'
+            ? document.getElementById('c-subject').value.trim()
+            : document.getElementById('c-body').value.trim();
+        if (!content) {
+            alert(type === 'subject' ? 'Konu boş!' : 'Mesaj boş!');
+            return;
+        }
+        const name = prompt(
+            (type === 'subject' ? '📌 Konu' : '📄 Mesaj') + ' şablonu adı girin:'
+        );
+        if (!name || !name.trim()) return;
+        try {
+            const d = await (await fetch('/api/templates/create', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ type, name: name.trim(), content })
+            })).json();
+            if (d.success) {
+                showAlert('c-alert', '✅ Şablon kaydedildi: ' + name.trim(), 'ok');
+            } else {
+                showAlert('c-alert', '❌ ' + d.message, 'err');
+            }
+        } catch(e) {
+            showAlert('c-alert', '❌ Hata: ' + e, 'err');
+        }
+    }
+</script>
+{% endblock %}

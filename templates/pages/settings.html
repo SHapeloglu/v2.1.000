@@ -1,0 +1,559 @@
+{% extends "base.html" %}
+{% block title %}Ayarlar{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>⚙ Ayarlar</h1>
+    <p>Göndericiler, kurallar, veritabanı ve abonelik yönetimi.</p>
+</div>
+
+<!-- Tab Menüsü -->
+<div style="display:flex;gap:4px;margin-bottom:24px;background:var(--s1);border:1px solid var(--border);border-radius:var(--r2);padding:5px" id="settings-tabs">
+    <button class="tab-btn active" onclick="switchTab('senders')" id="tab-senders">📤 Göndericiler</button>
+    <button class="tab-btn" onclick="switchTab('rules')" id="tab-rules">🛡 Gönderim Kuralları</button>
+    <button class="tab-btn" onclick="switchTab('db')" id="tab-db">🗄 Veritabanı</button>
+    <button class="tab-btn" onclick="switchTab('subscription')" id="tab-subscription">📧 Abonelik</button>
+</div>
+
+<!-- ═══ TAB: GONDERİCİLER ═══════════════════════════════════════════ -->
+<div id="pane-senders" class="tab-pane">
+
+    <div id="sender-cards" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:16px;margin-bottom:24px">
+        <div style="color:var(--muted);padding:20px;text-align:center;grid-column:1/-1">Yükleniyor...</div>
+    </div>
+
+    <div class="card">
+        <div class="card-title" id="sender-form-title">➕ Yeni Gönderici Ekle</div>
+        <div class="fg">
+            <div class="g2">
+                <div class="field"><label>Görünen Ad <span style="color:var(--err)">*</span></label><input id="s-name" placeholder="powerbi.com.tr"></div>
+                <div class="field"><label>Gönderici E-posta <span style="color:var(--err)">*</span></label><input id="s-email" placeholder="info@powerbi.com.tr"></div>
+            </div>
+            <div class="field">
+                <label>Gönderim Modu</label>
+                <div style="display:flex;gap:8px;margin-top:4px">
+                    <button class="btn btn-sm btn-primary" id="mode-smtp-btn" onclick="setSenderMode('smtp')">📡 SMTP</button>
+                    <button class="btn btn-sm btn-outline" id="mode-ses-btn" onclick="setSenderMode('ses')">☁ AWS SES</button>
+                </div>
+                <input type="hidden" id="s-mode" value="smtp">
+            </div>
+            <div id="smtp-fields" class="fg">
+                <div class="g3">
+                    <div class="field"><label>SMTP Sunucu</label><input id="s-smtp" placeholder="mail.firma.com"></div>
+                    <div class="field"><label>Port</label>
+                        <input id="s-port" placeholder="465" value="465">
+                        <div class="pills">
+                            <button class="pill active" onclick="setSPort(465,this)">465 SSL</button>
+                            <button class="pill" onclick="setSPort(587,this)">587 TLS</button>
+                            <button class="pill" onclick="setSPort(25,this)">25</button>
+                        </div>
+                    </div>
+                    <div class="field"><label>Kullanıcı Adı</label><input id="s-user" placeholder="info@firma.com"></div>
+                </div>
+                <div class="g2">
+                    <div class="field">
+                        <label>Şifre <span style="color:var(--muted);font-size:10px">(düzenlemede boş = değiştirme)</span></label>
+                        <div class="pw-wrap"><input type="password" id="s-pass" placeholder="••••••••"><button class="pw-eye" onclick="togglePw('s-pass',this)">👁</button></div>
+                    </div>
+                    <div class="field"><label>Bağlantı</label>
+                        <div class="toggle-row"><span class="tgl-label">SSL kullan</span><label class="tgl"><input type="checkbox" id="s-ssl" checked><span class="tgl-sl"></span></label></div>
+                    </div>
+                </div>
+            </div>
+            <div id="ses-fields" class="fg" style="display:none">
+                <div style="font-size:12px;color:var(--muted);padding:10px 13px;background:rgba(52,211,153,.05);border:1px solid rgba(52,211,153,.15);border-radius:var(--r)">
+                    ☁ Credentials <strong style="color:var(--ok)">Fernet şifreli</strong> DB'de saklanır.
+                </div>
+                <div class="g3">
+                    <div class="field">
+                        <label>AWS Access Key ID</label>
+                        <div class="pw-wrap"><input type="password" id="s-aws-key" placeholder="AKIA… (boş = değiştirme)"><button class="pw-eye" onclick="togglePw('s-aws-key',this)">👁</button></div>
+                    </div>
+                    <div class="field">
+                        <label>AWS Secret Access Key</label>
+                        <div class="pw-wrap"><input type="password" id="s-aws-secret" placeholder="•••••••• (boş = değiştirme)"><button class="pw-eye" onclick="togglePw('s-aws-secret',this)">👁</button></div>
+                    </div>
+                    <div class="field">
+                        <label>AWS Region</label>
+                        <select id="s-aws-region">
+                            <option value="us-east-1">us-east-1 (N. Virginia)</option>
+                            <option value="us-east-2">us-east-2 (Ohio)</option>
+                            <option value="us-west-2">us-west-2 (Oregon)</option>
+                            <option value="eu-west-1">eu-west-1 (Ireland)</option>
+                            <option value="eu-west-2">eu-west-2 (London)</option>
+                            <option value="eu-central-1">eu-central-1 (Frankfurt)</option>
+                            <option value="eu-north-1">eu-north-1 (Stockholm)</option>
+                            <option value="ap-southeast-1">ap-southeast-1 (Singapore)</option>
+                            <option value="ap-northeast-1">ap-northeast-1 (Tokyo)</option>
+                            <option value="ap-south-1">ap-south-1 (Mumbai)</option>
+                            <option value="sa-east-1">sa-east-1 (São Paulo)</option>
+                            <option value="ca-central-1">ca-central-1 (Canada)</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="btn-row" style="margin-top:14px">
+            <button class="btn btn-primary" onclick="saveSender()"><div class="sp" id="s-sp"></div><span id="s-btn-txt">💾 Kaydet</span></button>
+            <button class="btn btn-outline" onclick="cancelSenderEdit()" id="s-cancel-btn" style="display:none">İptal</button>
+        </div>
+        <div class="alert" id="s-alert"></div>
+    </div>
+</div>
+
+<!-- ═══ TAB: KURALLAR ════════════════════════════════════════════════ -->
+<div id="pane-rules" class="tab-pane" style="display:none">
+    <div class="card">
+        <div class="card-title" id="rule-form-title">Yeni Kural Ekle</div>
+        <div class="fg">
+            <div class="g2">
+                <div class="field"><label>Kural Adı</label><input id="r-name" placeholder="Haftalık Bülten Kuralı"></div>
+                <div class="field"><label>Gönderici</label><select id="r-sender"><option value="">— Seç —</option></select></div>
+            </div>
+            <div class="field">
+                <label>Aynı Adrese Tekrar Gönderim İçin Min. Bekleme (Saat)</label>
+                <div style="display:flex;gap:12px;align-items:flex-start">
+                    <div style="flex:0 0 120px"><input type="number" id="r-interval" placeholder="0" value="0" min="0"></div>
+                    <div class="pills">
+                        <button class="pill" onclick="setRInterval(0,this)">Sınırsız</button>
+                        <button class="pill" onclick="setRInterval(24,this)">1 Gün</button>
+                        <button class="pill" onclick="setRInterval(168,this)">1 Hafta</button>
+                        <button class="pill" onclick="setRInterval(720,this)">1 Ay</button>
+                    </div>
+                </div>
+                <div class="ib" style="margin-top:8px">⏱ Aynı alıcıya <strong id="ip-val">sınırsız sıklıkta</strong> gönderilebilir.</div>
+            </div>
+        </div>
+        <div class="btn-row" style="margin-top:14px">
+            <button class="btn btn-primary" onclick="saveRule()"><div class="sp" id="r-sp"></div><span id="r-btn-txt">💾 Kaydet</span></button>
+            <button class="btn btn-outline" onclick="cancelRuleEdit()" id="r-cancel-btn" style="display:none">İptal</button>
+        </div>
+        <div class="alert" id="r-alert"></div>
+    </div>
+    <div class="card">
+        <div class="card-title">Mevcut Kurallar</div>
+        <div class="tbl-wrap">
+            <table>
+                <thead><tr><th>Ad</th><th>Gönderici</th><th>Min. Aralık</th><th>Durum</th><th>İşlem</th></tr></thead>
+                <tbody id="rules-tbody"><tr><td colspan="5" style="text-align:center;color:var(--muted);padding:20px">Yükleniyor...</td></tr></tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- ═══ TAB: VERİTABANI ══════════════════════════════════════════════ -->
+<div id="pane-db" class="tab-pane" style="display:none">
+    <div class="card">
+        <div class="card-title">🗄 Ana Veritabanı (EC2)</div>
+        <div class="fg">
+            <div class="g3">
+                <div class="field"><label>Host</label><input id="db-host" placeholder="localhost"></div>
+                <div class="field"><label>Port</label><input id="db-port" placeholder="3306" value="3306"></div>
+                <div class="field"><label>Veritabanı Adı</label><input id="db-name" placeholder="mailsender"></div>
+            </div>
+            <div class="g2">
+                <div class="field"><label>Kullanıcı</label><input id="db-user" placeholder="root"></div>
+                <div class="field"><label>Şifre</label>
+                    <div class="pw-wrap"><input type="password" id="db-pass" placeholder="••••••••"><button class="pw-eye" onclick="togglePw('db-pass',this)">👁</button></div>
+                </div>
+            </div>
+            <div class="field">
+                <label>Şifreleme Anahtarı (SECRET_KEY) <span class="badge">Fernet Base64</span></label>
+                <div class="pw-wrap"><input type="password" id="sk" placeholder="Boş bırakırsanız yeni anahtar oluşturulur"><button class="pw-eye" onclick="togglePw('sk',this)">👁</button></div>
+                <div style="font-size:11px;color:var(--muted);margin-top:4px">SMTP şifrelerini şifreli kaydeder. <a href="#" onclick="genKey();return false" style="color:var(--accent)">Yeni anahtar oluştur →</a></div>
+            </div>
+        </div>
+        <div class="sbar" id="db-sbar" style="margin-top:16px">
+            <div class="sdot" id="db-dot"></div>
+            <span id="db-stext">Bağlantı henüz test edilmedi.</span>
+            <div class="sp dark" id="db-sp"></div>
+        </div>
+        <div class="btn-row" style="margin-top:14px">
+            <button class="btn btn-outline" onclick="testDb()">🔌 Bağlantıyı Test Et</button>
+            <button class="btn btn-primary" onclick="saveDb()"><div class="sp" id="db-save-sp"></div><span id="db-save-txt">💾 Kaydet & Tabloları Oluştur</span></button>
+        </div>
+        <div class="alert" id="db-alert"></div>
+    </div>
+</div>
+
+<!-- ═══ TAB: ABONELİK ════════════════════════════════════════════════ -->
+<div id="pane-subscription" class="tab-pane" style="display:none">
+
+    <!-- İstatistikler -->
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:12px;margin-bottom:20px">
+        <div class="card" style="padding:16px;text-align:center">
+            <div style="font-size:26px;font-weight:700;color:var(--accent)" id="stat-total">—</div>
+            <div style="font-size:11px;color:var(--muted);margin-top:3px">Toplam Engelli</div>
+        </div>
+        <div class="card" style="padding:16px;text-align:center">
+            <div style="font-size:26px;font-weight:700;color:#f87171" id="stat-unsubscribe">—</div>
+            <div style="font-size:11px;color:var(--muted);margin-top:3px">Abonelik İptali</div>
+        </div>
+        <div class="card" style="padding:16px;text-align:center">
+            <div style="font-size:26px;font-weight:700;color:#fb923c" id="stat-bounce">—</div>
+            <div style="font-size:11px;color:var(--muted);margin-top:3px">Bounce</div>
+        </div>
+        <div class="card" style="padding:16px;text-align:center">
+            <div style="font-size:26px;font-weight:700;color:#facc15" id="stat-complaint">—</div>
+            <div style="font-size:11px;color:var(--muted);margin-top:3px">Şikayet</div>
+        </div>
+    </div>
+
+    <!-- Hosting DB Ayarları -->
+    <div class="card">
+        <div class="card-title">🌐 Unsubscribe Sunucu Ayarları (Linux Hosting)</div>
+        <p style="font-size:13px;color:var(--muted);margin-bottom:16px">
+            EC2 kapalıyken abonelik iptali linklerinin çalışması için unsubscribe uygulamasını
+            ayrı bir hosting'de çalıştırın. Aşağıya o hosting'deki MySQL bilgilerini girin.
+        </p>
+        <div class="fg">
+            <div class="g2">
+                <div class="field"><label>Unsubscribe Uygulama URL</label><input id="unsub-app-url" placeholder="https://unsub.siteniz.com"></div>
+                <div class="field"><label>Hosting DB Host</label><input id="unsub-db-host" placeholder="localhost"></div>
+            </div>
+            <div class="g3">
+                <div class="field"><label>DB Port</label><input id="unsub-db-port" placeholder="3306" value="3306"></div>
+                <div class="field"><label>DB Adı</label><input id="unsub-db-name" placeholder="unsub_db"></div>
+                <div class="field"><label>DB Kullanıcı</label><input id="unsub-db-user" placeholder="unsub_user"></div>
+            </div>
+            <div class="field" style="max-width:340px">
+                <label>DB Şifre</label>
+                <div class="pw-wrap"><input type="password" id="unsub-db-pass" placeholder="••••••••"><button class="pw-eye" onclick="togglePw('unsub-db-pass',this)">👁</button></div>
+            </div>
+        </div>
+        <div class="btn-row" style="margin-top:14px">
+            <button class="btn btn-primary" onclick="saveUnsubConfig()"><div class="sp" id="unsub-sp"></div><span id="unsub-save-txt">💾 Kaydet & Test Et</span></button>
+        </div>
+        <div class="alert" id="unsub-db-alert"></div>
+    </div>
+
+    <!-- Liste Temizleme -->
+    <div class="card">
+        <div class="card-title">🗑 Mail Listelerinden Abonelik İptallerini Temizle</div>
+        <p style="font-size:13px;color:var(--muted);margin-bottom:16px">
+            Aboneliğini iptal eden kişileri seçtiğiniz tablodan kalıcı olarak siler.
+        </p>
+        <div class="fg">
+            <div class="g2">
+                <div class="field">
+                    <label>Tablo Seç <span style="color:var(--err)">*</span></label>
+                    <select id="purge-table"><option value="">— Tablo seç —</option></select>
+                </div>
+                <div class="field">
+                    <label>E-posta Sütunu <span style="color:var(--err)">*</span></label>
+                    <select id="purge-col"><option value="">— Önce tablo seçin —</option></select>
+                </div>
+            </div>
+            <div class="alert" id="purge-alert"></div>
+            <div class="btn-row">
+                <button class="btn btn-danger" onclick="purgeTable()">
+                    <div class="sp" id="purge-sp"></div>
+                    <span id="purge-btn-txt">🗑 Abonelik İptallerini Tablodan Sil</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Suppression Listesi -->
+    <div class="card">
+        <div class="card-title">
+            🚫 Suppression Listesi
+            <span id="supp-count" style="font-size:12px;font-weight:400;color:var(--muted);margin-left:8px"></span>
+        </div>
+        <div style="display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap">
+            <input id="supp-search" placeholder="E-posta ara..." style="flex:1;min-width:180px" oninput="loadSuppression(1)">
+            <select id="supp-reason" onchange="loadSuppression(1)" style="width:160px">
+                <option value="">Tüm sebepler</option>
+                <option value="unsubscribe">Abonelik iptali</option>
+                <option value="bounce">Bounce</option>
+                <option value="complaint">Şikayet</option>
+                <option value="invalid">Geçersiz</option>
+            </select>
+            <button class="btn btn-outline btn-sm" onclick="loadSuppression(1)">🔄 Yenile</button>
+        </div>
+        <div style="overflow-x:auto">
+            <table style="width:100%;border-collapse:collapse;font-size:13px">
+                <thead>
+                    <tr style="border-bottom:1px solid var(--border)">
+                        <th style="text-align:left;padding:8px 10px;color:var(--muted);font-weight:500">E-posta</th>
+                        <th style="text-align:left;padding:8px 10px;color:var(--muted);font-weight:500">Sebep</th>
+                        <th style="text-align:left;padding:8px 10px;color:var(--muted);font-weight:500">Kaynak</th>
+                        <th style="text-align:left;padding:8px 10px;color:var(--muted);font-weight:500">Tarih</th>
+                        <th style="padding:8px 10px"></th>
+                    </tr>
+                </thead>
+                <tbody id="supp-tbody">
+                    <tr><td colspan="5" style="text-align:center;color:var(--muted);padding:20px">Yükleniyor...</td></tr>
+                </tbody>
+            </table>
+        </div>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-top:14px;font-size:12px;color:var(--muted)">
+            <span id="supp-pg-info"></span>
+            <div style="display:flex;gap:8px">
+                <button class="btn btn-outline btn-sm" id="supp-pg-prev" onclick="loadSuppression(suppPage-1)" disabled>← Önceki</button>
+                <button class="btn btn-outline btn-sm" id="supp-pg-next" onclick="loadSuppression(suppPage+1)" disabled>Sonraki →</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<style>
+.tab-btn {
+    flex:1; padding:9px 14px; border:none; border-radius:10px;
+    background:transparent; color:var(--muted); font-family:'DM Sans',sans-serif;
+    font-size:13px; font-weight:500; cursor:pointer; transition:all .2s;
+}
+.tab-btn:hover { background:var(--s2); color:var(--text); }
+.tab-btn.active { background:linear-gradient(135deg,rgba(124,111,253,.2),rgba(244,114,182,.1)); color:var(--text); }
+</style>
+<script>
+let suppPage = 1;
+
+const REASON_LABELS = {
+    unsubscribe: '<span class="chip chip-skip">↩ İptal</span>',
+    bounce:      '<span class="chip chip-err">↩ Bounce</span>',
+    complaint:   '<span class="chip" style="background:rgba(251,146,60,.1);color:#fb923c;border-color:rgba(251,146,60,.2)">⚠ Şikayet</span>',
+    invalid:     '<span class="chip chip-off">✗ Geçersiz</span>',
+};
+
+// ── Tab Yönetimi ────────────────────────────────────────────────────
+function switchTab(tab) {
+    document.querySelectorAll('.tab-pane').forEach(p => p.style.display='none');
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    document.getElementById('pane-'+tab).style.display='block';
+    document.getElementById('tab-'+tab).classList.add('active');
+    // URL'i güncelle (sayfa yenilenmeden)
+    history.replaceState(null,'','/settings?tab='+tab);
+    // Tab'a özel yüklemeler
+    if (tab==='senders')      loadSenders();
+    if (tab==='rules')        { loadRules(); loadSenderSelects(); updateIPreview(); }
+    if (tab==='db')           loadDbConfig();
+    if (tab==='subscription') { loadStats(); loadSuppression(1); loadPurgeTables(); loadUnsubConfig(); }
+}
+
+// Sayfa açılışında URL'deki tab'ı oku
+document.addEventListener('DOMContentLoaded', () => {
+    const params = new URLSearchParams(window.location.search);
+    const tab = params.get('tab') || 'senders';
+    switchTab(tab);
+    setSenderMode('smtp');
+    document.getElementById('r-interval').addEventListener('input', updateIPreview);
+});
+
+// ── Göndericiler Tab ────────────────────────────────────────────────
+async function loadSenders() {
+    try {
+        const [sr, statsR] = await Promise.all([
+            fetch('/api/senders').then(r=>r.json()),
+            fetch('/api/senders/stats').then(r=>r.json()),
+        ]);
+        const container = document.getElementById('sender-cards');
+        if (!sr.data || !sr.data.length) {
+            container.innerHTML = '<div style="color:var(--muted);padding:20px;text-align:center;grid-column:1/-1">Henüz gönderici eklenmedi.</div>';
+            return;
+        }
+        const stats = statsR.stats || {};
+        container.innerHTML = sr.data.map(s => renderSenderCard(s, stats[s.id]||{})).join('');
+    } catch(e) { console.error(e); }
+}
+
+function renderSenderCard(s, st) {
+    const isSes     = s.sender_mode === 'ses';
+    const sentMonth = st.sent_month  || 0;
+    const totalMonth= st.total_month || 0;
+    const failMonth = totalMonth - sentMonth;
+    const sentAll   = st.sent_all   || 0;
+    const lastSent  = st.last_sent_at || '—';
+    const SES_FREE  = 62000;
+    const pct       = isSes ? Math.min(100, Math.round(sentMonth/SES_FREE*100)) : 0;
+    const barColor  = pct>=100?'#f87171':pct>=80?'#fb923c':'#4ade80';
+    const modeChip  = isSes?'<span class="chip chip-ok">☁ SES</span>':'<span class="chip chip-on">📡 SMTP</span>';
+    const statChip  = s.is_active?'<span class="chip chip-on">Aktif</span>':'<span class="chip chip-off">Pasif</span>';
+    const serverTxt = isSes?(s.aws_region||'us-east-1'):`${esc(s.smtp_server||'')}:${s.smtp_port||''}`;
+    const warnBanner= pct>=100
+        ?`<div style="background:rgba(248,113,113,.1);border:1px solid rgba(248,113,113,.3);border-radius:8px;padding:8px 12px;font-size:12px;color:#f87171;margin-top:10px">🚨 Bu ay limiti aştı! (${sentMonth.toLocaleString()} / ${SES_FREE.toLocaleString()})</div>`
+        :pct>=80
+        ?`<div style="background:rgba(251,146,60,.1);border:1px solid rgba(251,146,60,.3);border-radius:8px;padding:8px 12px;font-size:12px;color:#fb923c;margin-top:10px">⚠️ Aylık limitin %${pct}'i kullanıldı</div>`:'';
+    return `
+    <div class="card" style="padding:20px" id="sender-card-${s.id}">
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:12px">
+            <div>
+                <div style="font-weight:600;font-size:15px;margin-bottom:3px">${esc(s.name)}</div>
+                <div style="font-size:11px;color:var(--muted);font-family:'Space Mono',monospace">${esc(s.email)}</div>
+            </div>
+            <div style="display:flex;gap:5px">${modeChip}${statChip}</div>
+        </div>
+        <div style="font-size:10px;color:var(--muted);font-family:'Space Mono',monospace;margin-bottom:12px">${serverTxt}</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:12px">
+            <div style="background:var(--s2);border-radius:8px;padding:8px;text-align:center">
+                <div style="font-size:17px;font-weight:700;color:var(--accent)">${sentMonth.toLocaleString()}</div>
+                <div style="font-size:10px;color:var(--muted);margin-top:2px">Bu ay</div>
+            </div>
+            <div style="background:var(--s2);border-radius:8px;padding:8px;text-align:center">
+                <div style="font-size:17px;font-weight:700;color:${failMonth>0?'#f87171':'var(--muted)'}">${failMonth.toLocaleString()}</div>
+                <div style="font-size:10px;color:var(--muted);margin-top:2px">Hatalı</div>
+            </div>
+            <div style="background:var(--s2);border-radius:8px;padding:8px;text-align:center">
+                <div style="font-size:17px;font-weight:700">${sentAll.toLocaleString()}</div>
+                <div style="font-size:10px;color:var(--muted);margin-top:2px">Toplam</div>
+            </div>
+        </div>
+        ${isSes?`
+        <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--muted);margin-bottom:3px">
+            <span>EC2 ücretsiz limit (62.000/ay)</span>
+            <span style="color:${barColor};font-weight:600">%${pct}</span>
+        </div>
+        <div style="background:var(--s2);border-radius:99px;height:6px;overflow:hidden;margin-bottom:2px">
+            <div style="height:100%;width:${pct}%;background:${barColor};border-radius:99px;transition:width .5s"></div>
+        </div>`:''}
+        ${warnBanner}
+        ${isSes?`<div id="quota-${s.id}" style="margin-top:10px">
+            <button class="btn btn-outline btn-sm" onclick="fetchSesQuota(${s.id})" style="font-size:11px;width:100%">☁ AWS'den canlı kota sorgula</button>
+        </div>`:''}
+        <div style="font-size:11px;color:var(--muted);margin-top:10px">Son gönderim: <strong>${lastSent}</strong></div>
+        <div style="display:flex;gap:6px;margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">
+            <button class="btn btn-outline btn-sm" onclick="testSender(${s.id})">🔌 Test</button>
+            <button class="btn btn-outline btn-sm" onclick="editSenderFn(${s.id})">✏ Düzenle</button>
+            <button class="btn btn-danger btn-sm" onclick="delSender(${s.id})" style="margin-left:auto">🗑 Sil</button>
+        </div>
+    </div>`;
+}
+
+async function fetchSesQuota(senderId) {
+    const box = document.getElementById(`quota-${senderId}`);
+    box.innerHTML = '<div style="font-size:12px;color:var(--muted);text-align:center;padding:8px">⏳ AWS sorgulanıyor...</div>';
+    try {
+        const d = await (await fetch(`/api/ses-quota/${senderId}`)).json();
+        if (!d.success) { box.innerHTML=`<div style="font-size:12px;color:#f87171;padding:8px;background:rgba(248,113,113,.08);border-radius:8px;border:1px solid rgba(248,113,113,.2)">❌ ${esc(d.message)}</div><button class="btn btn-outline btn-sm" onclick="fetchSesQuota(${senderId})" style="font-size:11px;width:100%;margin-top:6px">🔄 Tekrar dene</button>`; return; }
+        const used=d.sent_24h,max24h=d.max_24h,pct24h=max24h>0?Math.min(100,Math.round(used/max24h*100)):0,bc=pct24h>=90?'#f87171':pct24h>=70?'#fb923c':'#4ade80';
+        box.innerHTML=`<div style="background:var(--s2);border-radius:10px;padding:12px;margin-top:8px;font-size:12px"><div style="font-weight:600;margin-bottom:10px">☁ Canlı AWS Kota</div><div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px"><div style="text-align:center"><div style="font-size:16px;font-weight:700;color:var(--accent)">${used.toLocaleString()}</div><div style="color:var(--muted);font-size:10px">Son 24s gönderilen</div></div><div style="text-align:center"><div style="font-size:16px;font-weight:700">${max24h.toLocaleString()}</div><div style="color:var(--muted);font-size:10px">24s limiti</div></div></div><div style="display:flex;justify-content:space-between;margin-bottom:3px"><span style="color:var(--muted)">24s kullanım</span><span style="color:${bc};font-weight:600">%${pct24h}</span></div><div style="background:var(--bg);border-radius:99px;height:5px;overflow:hidden;margin-bottom:8px"><div style="height:100%;width:${pct24h}%;background:${bc};border-radius:99px"></div></div><div style="color:var(--muted);font-size:11px">Max hız: <strong style="color:var(--text)">${d.max_per_sec} mail/s</strong></div>${pct24h>=80?`<div style="margin-top:8px;color:#fb923c;font-size:11px">⚠️ 24 saatlik limitin %${pct24h}'ine ulaşıldı.</div>`:''}</div><button class="btn btn-outline btn-sm" onclick="fetchSesQuota(${senderId})" style="font-size:11px;width:100%;margin-top:6px">🔄 Yenile</button>`;
+    } catch(e) { box.innerHTML=`<div style="font-size:12px;color:#f87171;padding:8px">Bağlantı hatası.</div>`; }
+}
+
+// ── Abonelik Tab ────────────────────────────────────────────────────
+async function loadStats() {
+    try {
+        const d = await (await fetch('/api/suppression/stats')).json();
+        if (!d.success) return;
+        document.getElementById('stat-total').textContent      = d.stats.total       || 0;
+        document.getElementById('stat-unsubscribe').textContent= d.stats.unsubscribe || 0;
+        document.getElementById('stat-bounce').textContent     = d.stats.bounce      || 0;
+        document.getElementById('stat-complaint').textContent  = d.stats.complaint   || 0;
+    } catch(e) {}
+}
+
+async function loadUnsubConfig() {
+    try {
+        const d = await (await fetch('/api/unsub-db-config')).json();
+        document.getElementById('unsub-app-url').value  = d.UNSUB_APP_URL  || '';
+        document.getElementById('unsub-db-host').value  = d.UNSUB_DB_HOST  || '';
+        document.getElementById('unsub-db-port').value  = d.UNSUB_DB_PORT  || '3306';
+        document.getElementById('unsub-db-name').value  = d.UNSUB_DB_NAME  || '';
+        document.getElementById('unsub-db-user').value  = d.UNSUB_DB_USER  || '';
+    } catch(e) {}
+}
+
+async function saveUnsubConfig() {
+    const btn = document.getElementById('unsub-save-txt');
+    const sp  = document.getElementById('unsub-sp');
+    btn.textContent='Kaydediliyor...'; sp.style.display='block';
+    hideAlert('unsub-db-alert');
+    try {
+        const d = await (await fetch('/api/unsub-db-config', {
+            method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({
+                UNSUB_APP_URL:     document.getElementById('unsub-app-url').value,
+                UNSUB_DB_HOST:     document.getElementById('unsub-db-host').value,
+                UNSUB_DB_PORT:     document.getElementById('unsub-db-port').value,
+                UNSUB_DB_NAME:     document.getElementById('unsub-db-name').value,
+                UNSUB_DB_USER:     document.getElementById('unsub-db-user').value,
+                UNSUB_DB_PASSWORD: document.getElementById('unsub-db-pass').value,
+            })
+        })).json();
+        showAlert('unsub-db-alert', (d.success?'✅ ':'❌ ')+d.message, d.success?'ok':'err');
+    } catch(e) { showAlert('unsub-db-alert','Bağlantı hatası.','err'); }
+    finally { btn.textContent='💾 Kaydet & Test Et'; sp.style.display='none'; }
+}
+
+async function loadSuppression(page) {
+    suppPage = page;
+    const search = document.getElementById('supp-search').value;
+    const reason = document.getElementById('supp-reason').value;
+    let url = `/api/suppression?page=${page}&per_page=50`;
+    if (search) url+=`&search=${encodeURIComponent(search)}`;
+    if (reason) url+=`&reason=${reason}`;
+    try {
+        const d = await (await fetch(url)).json();
+        const tb = document.getElementById('supp-tbody');
+        if (!d.data||!d.data.length) {
+            tb.innerHTML='<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:20px">Kayıt bulunamadı.</td></tr>';
+            document.getElementById('supp-count').textContent='';
+            document.getElementById('supp-pg-info').textContent='';
+            document.getElementById('supp-pg-prev').disabled=true;
+            document.getElementById('supp-pg-next').disabled=true;
+            return;
+        }
+        tb.innerHTML=d.data.map(r=>`<tr style="border-bottom:1px solid var(--border)">
+            <td style="padding:9px 10px;font-size:12px;font-family:'Space Mono',monospace">${esc(r.email)}</td>
+            <td style="padding:9px 10px">${REASON_LABELS[r.reason]||esc(r.reason)}</td>
+            <td style="padding:9px 10px;font-size:11px;color:var(--muted)">${esc(r.source||'—')}</td>
+            <td style="padding:9px 10px;font-size:11px;color:var(--muted);white-space:nowrap">${esc(r.created_at||'')}</td>
+            <td style="padding:9px 10px;text-align:right"><button class="btn btn-outline btn-sm" onclick="removeSuppression('${esc(r.email)}')">✕ Kaldır</button></td>
+        </tr>`).join('');
+        const pages=Math.ceil(d.total/50);
+        document.getElementById('supp-count').textContent=`${d.total} kayıt`;
+        document.getElementById('supp-pg-info').textContent=`Sayfa ${page} / ${pages||1}`;
+        document.getElementById('supp-pg-prev').disabled=(page<=1);
+        document.getElementById('supp-pg-next').disabled=(page>=pages);
+    } catch(e) { console.error(e); }
+}
+
+async function removeSuppression(email) {
+    if (!confirm(`"${email}" adresini listeden kaldırmak istediğinize emin misiniz?`)) return;
+    const d = await (await fetch('/api/suppression',{method:'DELETE',headers:{'Content-Type':'application/json'},body:JSON.stringify({email})})).json();
+    if (d.success) { loadSuppression(suppPage); loadStats(); }
+    else alert('Hata: '+d.message);
+}
+
+async function loadPurgeTables() {
+    try {
+        const d = await (await fetch('/api/list-tables')).json();
+        const sel = document.getElementById('purge-table');
+        if (!d.success||!d.tables.length) { sel.innerHTML='<option value="">— Tablo bulunamadı —</option>'; return; }
+        sel.innerHTML='<option value="">— Tablo seç —</option>'+d.tables.map(t=>`<option value="${esc(t.name)}" data-cols='${JSON.stringify(t.columns)}'>${esc(t.name)} (${t.row_count} kayıt)</option>`).join('');
+        sel.addEventListener('change', onPurgeTableChange);
+    } catch(e) {}
+}
+
+function onPurgeTableChange() {
+    const sel=document.getElementById('purge-table');
+    const opt=sel.options[sel.selectedIndex];
+    const colSel=document.getElementById('purge-col');
+    if (!sel.value) { colSel.innerHTML='<option value="">— Önce tablo seçin —</option>'; return; }
+    try {
+        const cols=JSON.parse(opt.dataset.cols||'[]');
+        colSel.innerHTML=cols.map(c=>`<option value="${esc(c)}">${esc(c)}</option>`).join('');
+        const auto=cols.find(c=>/mail|e.?mail|eposta/i.test(c));
+        if (auto) colSel.value=auto;
+    } catch(e) { colSel.innerHTML='<option value="">Sütunlar yüklenemedi</option>'; }
+}
+
+async function purgeTable() {
+    const table=document.getElementById('purge-table').value;
+    const col=document.getElementById('purge-col').value;
+    if (!table||!col) { showAlert('purge-alert','Tablo ve e-posta sütunu seçmelisiniz.','err'); return; }
+    if (!confirm(`"${table}" tablosundaki suppression listesindeki tüm e-postalar silinecek. Devam?`)) return;
+    const btn=document.getElementById('purge-btn-txt');
+    const sp=document.getElementById('purge-sp');
+    btn.textContent='Siliniyor...'; sp.style.display='block'; hideAlert('purge-alert');
+    try {
+        const d=await (await fetch('/api/suppression/purge-table',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({table_name:table,email_col:col})})).json();
+        showAlert('purge-alert',(d.success?'✅ ':'❌ ')+d.message,d.success?'ok':'err');
+        if (d.success) loadPurgeTables();
+    } catch(e) { showAlert('purge-alert','Bağlantı hatası.','err'); }
+    finally { btn.textContent='🗑 Abonelik İptallerini Tablodan Sil'; sp.style.display='none'; }
+}
+</script>
+{% endblock %}

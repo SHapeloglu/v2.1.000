@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="tr" id="html-root">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1.0">
+    <title>MailSender Pro - {% block title %}{% endblock %}</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=DM+Sans:ital,wght@0,300;0,400;0,500;0,600;1,400&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <script>
+        // Temayı uygula — FOUC (sayfa yanıp sönmesi) önlemek için erken yükle.
+        // DB'den gelen kullanıcı teması Jinja2 ile sayfaya gömülür (sunucu taraflı).
+        // localStorage artık yedek olarak kullanılır — oturum açılmadan önce vb. için.
+        (function(){
+            var serverTheme = '{{ current_user.theme|default("charcoal") }}';
+            var t = serverTheme || localStorage.getItem('msp_theme') || 'charcoal';
+            document.documentElement.setAttribute('data-theme', t);
+            // Sonraki yüklemelerde hızlı erişim için localStorage'ı da güncelle
+            try { localStorage.setItem('msp_theme', t); } catch(e) {}
+        })();
+    </script>
+<style>
+.snav-btn{flex:1;padding:9px 14px;border-radius:10px;background:transparent;color:var(--muted);font-family:'DM Sans',sans-serif;font-size:13px;font-weight:500;cursor:pointer;transition:all .2s;text-align:center;text-decoration:none;display:block}
+.snav-btn:hover{background:var(--s2);color:var(--text)}
+.snav-btn.active{background:linear-gradient(135deg,rgba(124,111,253,.2),rgba(244,114,182,.1));color:var(--text)}
+</style>
+    <!-- CSRF Token: Tüm AJAX isteklerinde X-CSRF-Token header'ı olarak gönderilir -->
+    <meta name="csrf-token" content="{{ csrf_token }}">
+</head>
+<body>
+<div class="shell">
+    <aside class="sidebar">
+        <div class="brand">
+            <div class="brand-logo">✦ mailsender</div>
+            <h2>Mail<span>Sender</span> Pro</h2>
+            <p>MySQL destekli toplu mail sistemi</p>
+        </div>
+        <nav>
+            <a href="{{ url_for('bulk_send_page') }}" class="nav-btn {% if request.endpoint == 'bulk_send_page' %}active{% endif %}">
+                <span class="icon">📋</span> Toplu Gönderim
+            </a>
+            <a href="{{ url_for('single_send_page') }}" class="nav-btn {% if request.endpoint == 'single_send_page' %}active{% endif %}">
+                <span class="icon">✉</span> Tek Mail
+            </a>
+            <a href="{{ url_for('send_log_page') }}" class="nav-btn {% if request.endpoint == 'send_log_page' %}active{% endif %}">
+                <span class="icon">📊</span> Gönderim Geçmişi
+            </a>
+            <a href="{{ url_for('settings_smtp') }}" class="nav-btn {% if request.endpoint and request.endpoint.startswith('settings') %}active{% endif %}">
+                <span class="icon">⚙</span> Ayarlar
+            </a>
+        </nav>
+        <div class="sidebar-footer" style="display:flex;flex-direction:column;gap:8px">
+            {% if current_user.id %}
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 10px;background:var(--s2);border-radius:8px;border:1px solid var(--border)">
+                <div style="font-size:12px">
+                    <span style="color:var(--muted)">👤</span>
+                    <span style="font-weight:600;margin-left:4px">{{ current_user.username }}</span>
+                    <span style="font-size:10px;color:var(--muted);margin-left:4px">{{ '👑' if current_user.role == 'admin' else '✏️' }}</span>
+                </div>
+                <a href="/auth/logout" style="font-size:11px;color:var(--muted);text-decoration:none;padding:3px 7px;border:1px solid var(--border);border-radius:5px" title="Çıkış Yap">çıkış</a>
+            </div>
+            {% endif %}
+            <div style="font-size:11px;color:var(--muted);text-align:center">MailSender Pro {{ app_version }}</div>
+        </div>
+    </aside>
+
+    <main>
+        {% block content %}{% endblock %}
+    </main>
+</div>
+
+<!-- Excel Import Modal -->
+<div id="excel-import-modal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.8);backdrop-filter:blur(5px);z-index:1000;align-items:center;justify-content:center;">
+    <div style="background:var(--s1);border:1px solid var(--border);border-radius:var(--r3);max-width:700px;width:90%;max-height:90vh;overflow-y:auto;margin:20px;box-shadow:0 20px 40px rgba(0,0,0,0.4);">
+        <div style="padding:24px 28px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;">
+            <h3 style="font-size:18px;font-weight:600;">📥 Excel Veritabanına Aktar</h3>
+            <button onclick="closeImportModal()" style="background:none;border:none;color:var(--muted);font-size:20px;cursor:pointer;">✕</button>
+        </div>
+        <div style="padding:24px 28px;" id="import-modal-content"></div>
+        <div style="padding:16px 28px 24px;border-top:1px solid var(--border);display:flex;gap:12px;justify-content:flex-end;">
+            <button class="btn btn-outline" onclick="closeImportModal()">İptal</button>
+            <button class="btn btn-primary" id="import-confirm-btn" onclick="confirmImport()">Aktar</button>
+        </div>
+    </div>
+</div>
+
+<script src="{{ url_for('static', filename='js/main.js') }}"></script>
+{% block scripts %}{% endblock %}
+
+<!-- ── Yardım Butonu & Modal ──────────────────────────────────── -->
+{% if help %}
+<button id="help-fab" onclick="openHelpModal()" title="Bu sayfa hakkında yardım"
+    style="position:fixed;bottom:24px;right:24px;width:42px;height:42px;border-radius:50%;
+           background:var(--accent);color:#fff;border:none;font-size:18px;cursor:pointer;
+           box-shadow:0 4px 16px rgba(0,0,0,0.3);z-index:900;transition:transform .15s,opacity .15s;
+           display:flex;align-items:center;justify-content:center;font-weight:700;line-height:1">
+    ?
+</button>
+
+<div id="help-modal-bg" onclick="closeHelpModal()"
+    style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);
+           backdrop-filter:blur(4px);z-index:1100;align-items:flex-end;justify-content:flex-end;padding:24px">
+    <div onclick="event.stopPropagation()"
+        style="background:var(--s1);border:1px solid var(--border);border-radius:var(--r3);
+               width:min(460px,95vw);max-height:80vh;overflow-y:auto;
+               box-shadow:0 20px 60px rgba(0,0,0,0.5);animation:helpSlideIn .2s ease">
+        <!-- Başlık -->
+        <div style="padding:20px 22px 14px;border-bottom:1px solid var(--border);
+                    display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;background:var(--s1)">
+            <div>
+                <div style="font-size:17px;font-weight:700">{{ help.title }}</div>
+                <div style="font-size:12px;color:var(--muted);margin-top:3px">{{ help.intro }}</div>
+            </div>
+            <button onclick="closeHelpModal()"
+                style="background:none;border:none;color:var(--muted);font-size:20px;cursor:pointer;
+                       padding:4px 8px;border-radius:6px;line-height:1">✕</button>
+        </div>
+        <!-- Adımlar -->
+        <div style="padding:18px 22px;display:flex;flex-direction:column;gap:14px">
+            {% for label, desc in help.steps %}
+            <div style="display:flex;gap:12px;align-items:flex-start">
+                <div style="min-width:26px;height:26px;border-radius:50%;background:linear-gradient(135deg,var(--accent),#f472b6);
+                            display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:#fff;margin-top:1px">
+                    {{ loop.index }}
+                </div>
+                <div>
+                    <div style="font-size:13px;font-weight:600;margin-bottom:2px">{{ label }}</div>
+                    <div style="font-size:12px;color:var(--muted);line-height:1.5">{{ desc }}</div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+        <!-- İpucu -->
+        {% if help.tip %}
+        <div style="margin:0 22px 20px;padding:10px 14px;background:rgba(124,111,253,.08);
+                    border:1px solid rgba(124,111,253,.2);border-radius:10px;
+                    font-size:12px;color:var(--muted);line-height:1.5">
+            {{ help.tip }}
+        </div>
+        {% endif %}
+        <!-- Tam kılavuz linki -->
+        <div style="padding:12px 22px 18px;border-top:1px solid var(--border);text-align:center">
+            <a href="/settings/help" style="font-size:12px;color:var(--accent);text-decoration:none">
+                📖 Tam kılavuzu görüntüle →
+            </a>
+        </div>
+    </div>
+</div>
+<style>
+@keyframes helpSlideIn {
+    from { opacity:0; transform:translateY(16px) scale(.97); }
+    to   { opacity:1; transform:translateY(0)    scale(1); }
+}
+#help-fab:hover { transform:scale(1.12); }
+</style>
+<script>
+function openHelpModal()  { document.getElementById('help-modal-bg').style.display='flex'; }
+function closeHelpModal() { document.getElementById('help-modal-bg').style.display='none'; }
+document.addEventListener('keydown', e => { if (e.key==='Escape') closeHelpModal(); });
+</script>
+{% endif %}
+
+
+<script>
+/* ── CSRF Helper: Tüm fetch POST/PUT/DELETE isteklerine otomatik X-CSRF-Token header ekler ── */
+(function() {
+    var _orig = window.fetch;
+    window.fetch = function(url, opts) {
+        opts = opts || {};
+        var method = (opts.method || 'GET').toUpperCase();
+        if (['POST','PUT','DELETE','PATCH'].includes(method)) {
+            opts.headers = opts.headers || {};
+            var meta = document.querySelector('meta[name="csrf-token"]');
+            if (meta) opts.headers['X-CSRF-Token'] = meta.getAttribute('content');
+        }
+        return _orig.call(this, url, opts);
+    };
+})();
+</script>
+</body>
+</html>

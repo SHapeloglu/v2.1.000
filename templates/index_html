@@ -1,0 +1,462 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>MailSender Pro</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=DM+Sans:ital,wght@0,300;0,400;0,500;0,600;1,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+<div class="shell">
+<aside class="sidebar">
+  <div class="brand">
+    <div class="brand-logo">✦ mailsender</div>
+    <h2>Mail<span>Sender</span> Pro</h2>
+    <p>MySQL destekli toplu mail sistemi</p>
+  </div>
+  <nav>
+    <button class="nav-btn" onclick="goPage('p-setup')" id="nb-setup">
+      <span class="icon">⚙</span> DB Ayarları
+      <span class="nav-badge" id="db-badge">!</span>
+    </button>
+    <button class="nav-btn" onclick="goPage('p-senders');loadSenders()" id="nb-senders">
+      <span class="icon">📤</span> Göndericiler
+    </button>
+    <button class="nav-btn" onclick="goPage('p-rules');loadRules()" id="nb-rules">
+      <span class="icon">🛡</span> Gönderim Kuralları
+    </button>
+    <button class="nav-btn active" onclick="goPage('p-compose')" id="nb-compose">
+      <span class="icon">✉</span> Tek Mail
+    </button>
+    <button class="nav-btn" onclick="goPage('p-bulk')" id="nb-bulk">
+      <span class="icon">📋</span> Toplu Gönderim
+    </button>
+    <button class="nav-btn" onclick="goPage('p-log');loadLog(1)" id="nb-log">
+      <span class="icon">📊</span> Gönderim Geçmişi
+    </button>
+  </nav>
+  <div class="sidebar-footer">MailSender Pro v2.0</div>
+</aside>
+
+<main>
+
+<!-- ─ DB AYARLARI ─ -->
+<div class="page" id="p-setup">
+  <div class="page-header">
+    <h1>⚙ Veritabanı Ayarları</h1>
+    <p>MySQL bağlantısı .env dosyasına kaydedilir. Göndericiler, kurallar ve loglar DB'de tutulur.</p>
+  </div>
+  <div class="card">
+    <div class="card-title">MySQL Bağlantısı</div>
+    <div class="fg">
+      <div class="g3">
+        <div class="field"><label>Host</label><input id="db-host" placeholder="localhost"></div>
+        <div class="field"><label>Port</label><input id="db-port" placeholder="3306" value="3306"></div>
+        <div class="field"><label>Veritabanı Adı</label><input id="db-name" placeholder="mailsender"></div>
+      </div>
+      <div class="g2">
+        <div class="field"><label>Kullanıcı</label><input id="db-user" placeholder="root"></div>
+        <div class="field"><label>Şifre</label>
+          <div class="pw-wrap"><input type="password" id="db-pass" placeholder="••••••••"><button class="pw-eye" onclick="togglePw('db-pass',this)">👁</button></div>
+        </div>
+      </div>
+      <div class="field">
+        <label>Şifreleme Anahtarı (SECRET_KEY) <span class="badge">Fernet Base64</span></label>
+        <div class="pw-wrap"><input type="password" id="sk" placeholder="Boş bırakırsanız yeni anahtar oluşturulur"><button class="pw-eye" onclick="togglePw('sk',this)">👁</button></div>
+        <div style="font-size:11px;color:var(--muted);margin-top:4px">SMTP şifrelerini DB'ye şifreli kaydeder. <a href="#" onclick="genKey();return false" style="color:var(--accent)">Yeni anahtar oluştur →</a></div>
+      </div>
+    </div>
+  </div>
+  <div class="sbar" id="db-sbar"><div class="sdot" id="db-dot"></div><span id="db-stext">Bağlantı henüz test edilmedi.</span><div class="sp dark" id="db-sp"></div></div>
+  <div style="margin-top:14px">
+    <div class="btn-row">
+      <button class="btn btn-outline" onclick="testDb()">🔌 Bağlantıyı Test Et</button>
+      <button class="btn btn-primary" onclick="saveDb()"><div class="sp" id="db-save-sp"></div><span id="db-save-txt">💾 Kaydet & Tabloları Oluştur</span></button>
+    </div>
+    <div class="alert" id="db-alert"></div>
+  </div>
+</div>
+
+<!-- ─ GÖNDERİCİLER ─ -->
+<div class="page" id="p-senders">
+  <div class="page-header">
+    <h1>📤 Göndericiler</h1>
+    <p>Farklı SMTP hesapları ekleyin. Şifreler AES-256 (Fernet) ile şifreli DB'de saklanır.</p>
+  </div>
+  <div class="card">
+    <div class="card-title" id="sender-form-title">Yeni Gönderici Ekle</div>
+    <div class="fg">
+      <div class="g2">
+        <div class="field"><label>Görünen Ad</label><input id="s-name" placeholder="Satış Ekibi"></div>
+        <div class="field"><label>Gönderici E-posta</label><input id="s-email" placeholder="satis@firma.com"></div>
+      </div>
+
+      <!-- Mod Seçici -->
+      <div class="field">
+        <label>Gönderim Modu</label>
+        <div style="display:flex;gap:8px;margin-top:2px">
+          <button class="btn btn-sm btn-primary" id="mode-smtp-btn" onclick="setSenderMode('smtp')">📡 SMTP</button>
+          <button class="btn btn-sm btn-outline" id="mode-ses-btn" onclick="setSenderMode('ses')">☁ AWS SES</button>
+        </div>
+        <input type="hidden" id="s-mode" value="smtp">
+      </div>
+
+      <!-- SMTP Alanları -->
+      <div id="smtp-fields" class="fg">
+        <div class="g3">
+          <div class="field"><label>SMTP Sunucu</label><input id="s-smtp" placeholder="mail.firma.com"></div>
+          <div class="field"><label>Port</label>
+            <input id="s-port" placeholder="465" value="465">
+            <div class="pills">
+              <button class="pill active" onclick="setSPort(465,this)">465 SSL</button>
+              <button class="pill" onclick="setSPort(587,this)">587 TLS</button>
+              <button class="pill" onclick="setSPort(25,this)">25</button>
+            </div>
+          </div>
+          <div class="field"><label>SMTP Kullanıcı Adı</label><input id="s-user" placeholder="satis@firma.com"></div>
+        </div>
+        <div class="g2">
+          <div class="field">
+            <label>Şifre <span style="color:var(--muted);font-size:10px">(düzenlemede boş = değiştirme)</span></label>
+            <div class="pw-wrap"><input type="password" id="s-pass" placeholder="••••••••"><button class="pw-eye" onclick="togglePw('s-pass',this)">👁</button></div>
+          </div>
+          <div class="field"><label>Bağlantı</label>
+            <div class="toggle-row"><span class="tgl-label">SSL kullan (port 465)</span><label class="tgl"><input type="checkbox" id="s-ssl" checked><span class="tgl-sl"></span></label></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- AWS SES Alanları -->
+      <div id="ses-fields" class="fg" style="display:none">
+        <div style="font-size:12px;color:var(--muted);padding:10px 13px;background:rgba(52,211,153,.05);border:1px solid rgba(52,211,153,.15);border-radius:var(--r)">
+          ☁ AWS credentials <strong style="color:var(--ok)">Fernet şifreli</strong> olarak veritabanına kaydedilir. AWS Console → IAM → Security credentials → Create access key
+        </div>
+        <div class="g3">
+          <div class="field">
+            <label>AWS Access Key ID</label>
+            <div class="pw-wrap"><input type="password" id="s-aws-key" placeholder="AKIA… (boş = değiştirme)"><button class="pw-eye" onclick="togglePw('s-aws-key',this)">👁</button></div>
+          </div>
+          <div class="field">
+            <label>AWS Secret Access Key</label>
+            <div class="pw-wrap"><input type="password" id="s-aws-secret" placeholder="•••••••• (boş = değiştirme)"><button class="pw-eye" onclick="togglePw('s-aws-secret',this)">👁</button></div>
+          </div>
+          <div class="field">
+            <label>AWS Region</label>
+            <select id="s-aws-region">
+              <option value="us-east-1">us-east-1 (N. Virginia)</option>
+              <option value="us-east-2">us-east-2 (Ohio)</option>
+              <option value="us-west-1">us-west-1 (N. California)</option>
+              <option value="us-west-2">us-west-2 (Oregon)</option>
+              <option value="eu-west-1">eu-west-1 (Ireland)</option>
+              <option value="eu-west-2">eu-west-2 (London)</option>
+              <option value="eu-west-3">eu-west-3 (Paris)</option>
+              <option value="eu-central-1">eu-central-1 (Frankfurt)</option>
+              <option value="eu-north-1">eu-north-1 (Stockholm)</option>
+              <option value="eu-south-1">eu-south-1 (Milan)</option>
+              <option value="ap-southeast-1">ap-southeast-1 (Singapore)</option>
+              <option value="ap-southeast-2">ap-southeast-2 (Sydney)</option>
+              <option value="ap-northeast-1">ap-northeast-1 (Tokyo)</option>
+              <option value="ap-northeast-2">ap-northeast-2 (Seoul)</option>
+              <option value="ap-south-1">ap-south-1 (Mumbai)</option>
+              <option value="sa-east-1">sa-east-1 (São Paulo)</option>
+              <option value="ca-central-1">ca-central-1 (Canada)</option>
+              <option value="me-south-1">me-south-1 (Bahrain)</option>
+              <option value="af-south-1">af-south-1 (Cape Town)</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+    </div>
+    <div class="btn-row" style="margin-top:14px">
+      <button class="btn btn-primary" onclick="saveSender()"><div class="sp" id="s-sp"></div><span id="s-btn-txt">💾 Kaydet</span></button>
+      <button class="btn btn-outline" onclick="cancelSenderEdit()" id="s-cancel-btn" style="display:none">İptal</button>
+    </div>
+    <div class="alert" id="s-alert"></div>
+  </div>
+  <div class="card">
+    <div class="card-title">Kayıtlı Göndericiler</div>
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>Ad</th><th>E-posta</th><th>Mod</th><th>Sunucu / Region</th><th>Durum</th><th>İşlem</th></tr></thead>
+        <tbody id="senders-tbody"><tr><td colspan="6" style="text-align:center;color:var(--muted);padding:20px">Yükleniyor...</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- ─ KURALLAR ─ -->
+<div class="page" id="p-rules">
+  <div class="page-header">
+    <h1>🛡 Gönderim Kuralları</h1>
+    <p>Aynı alıcıya tekrar göndermek için minimum bekleme süresini belirleyin.</p>
+  </div>
+  <div class="card">
+    <div class="card-title" id="rule-form-title">Yeni Kural Ekle</div>
+    <div class="fg">
+      <div class="g2">
+        <div class="field"><label>Kural Adı</label><input id="r-name" placeholder="Haftalık Bülten Kuralı"></div>
+        <div class="field"><label>Bu Kurala Bağlı Gönderici</label><select id="r-sender"><option value="">— Seç —</option></select></div>
+      </div>
+      <div class="field">
+        <label>Aynı Adrese Tekrar Gönderim İçin Min. Bekleme (Saat)</label>
+        <div style="display:flex;gap:12px;align-items:flex-start">
+          <div style="flex:0 0 120px"><input type="number" id="r-interval" placeholder="0" value="0" min="0"></div>
+          <div>
+            <div class="pills">
+              <button class="pill" onclick="setRInterval(0,this)">Sınırsız</button>
+              <button class="pill" onclick="setRInterval(24,this)">1 Gün</button>
+              <button class="pill" onclick="setRInterval(168,this)">1 Hafta</button>
+              <button class="pill" onclick="setRInterval(720,this)">1 Ay</button>
+            </div>
+          </div>
+        </div>
+        <div class="ib" style="margin-top:8px">⏱ Aynı alıcıya <strong id="ip-val">sınırsız sıklıkta</strong> gönderilebilir.</div>
+      </div>
+    </div>
+    <div class="btn-row" style="margin-top:14px">
+      <button class="btn btn-primary" onclick="saveRule()"><div class="sp" id="r-sp"></div><span id="r-btn-txt">💾 Kaydet</span></button>
+      <button class="btn btn-outline" onclick="cancelRuleEdit()" id="r-cancel-btn" style="display:none">İptal</button>
+    </div>
+    <div class="alert" id="r-alert"></div>
+  </div>
+  <div class="card">
+    <div class="card-title">Mevcut Kurallar</div>
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>Ad</th><th>Gönderici</th><th>Min. Aralık</th><th>Durum</th><th>İşlem</th></tr></thead>
+        <tbody id="rules-tbody"><tr><td colspan="5" style="text-align:center;color:var(--muted);padding:20px">Yükleniyor...</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- ─ TEK MAIL ─ -->
+<div class="page active" id="p-compose">
+  <div class="page-header"><h1>✉ Tek Mail Gönder</h1><p>Bir alıcıya hızlıca mail gönderin. {{degisken}} ile kişiselleştirme desteklenir.</p></div>
+  <div class="card">
+    <div class="card-title">Gönderici & Alıcı</div>
+    <div class="fg">
+      <div class="g2">
+        <div class="field"><label>Gönderici <span style="color:var(--err)">*</span></label><select id="c-sender"><option value="">— Gönderici seç —</option></select></div>
+        <div class="field"><label>Alıcı E-posta <span style="color:var(--err)">*</span></label><input id="c-to" placeholder="alici@ornek.com" type="email"></div>
+      </div>
+      <div class="field"><label>Konu <span style="color:var(--err)">*</span></label><input id="c-subject" placeholder="E-posta konusu..."></div>
+      <div class="toggle-row">
+        <span class="tgl-label">HTML modu — HTML içerik düzgün görüntülenir</span>
+        <label class="tgl"><input type="checkbox" id="c-html" checked><span class="tgl-sl"></span></label>
+      </div>
+      <div class="field"><label>Mesaj <span style="color:var(--err)">*</span></label><textarea id="c-body" placeholder="<p>Mesajınız...</p>"></textarea></div>
+      <div class="field"><label>Ek Dosya</label>
+        <div class="fup" onclick="document.getElementById('c-file').click()">
+          <input type="file" id="c-file" onchange="showFn(this,'c-fn')">
+          <div class="fup-icon">📎</div><div class="fup-txt"><strong>Dosya seç</strong></div>
+          <div id="c-fn" class="fup-name"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <button class="btn btn-primary btn-full" onclick="sendSingle()"><div class="sp" id="c-sp"></div><span id="c-btn-txt">E-posta Gönder →</span></button>
+  <div class="alert" id="c-alert"></div>
+</div>
+
+<!-- ─ TOPLU GÖNDERİM ─ -->
+<div class="page" id="p-bulk">
+  <div class="page-header">
+    <h1>📋 Toplu Gönderim</h1>
+    <p>Excel listesinden toplu mail. <code style="background:var(--s2);padding:2px 6px;border-radius:5px;font-size:11px">{{KolonAdi}}</code> ile kişiselleştirin. <span id="ses-mode-badge" class="badge" style="display:none;background:rgba(52,211,153,.1);border-color:rgba(52,211,153,.3);color:#34d399">☁ AWS SES</span></p>
+  </div>
+
+  <div class="card">
+    <div class="card-title">① Gönderici & Kural Seçimi</div>
+    <div class="fg">
+      <div class="g2">
+        <div class="field"><label>Gönderici <span style="color:var(--err)">*</span></label><select id="b-sender"><option value="">— Seç —</option></select></div>
+        <div class="field"><label>Gönderim Kuralı <span class="badge">opsiyonel</span></label><select id="b-rule" onchange="onRuleChange()"><option value="">— Kural yok (sınırsız) —</option></select></div>
+      </div>
+      <div id="rule-info" class="ib" style="display:none">⏱ Seçilen kural: aynı alıcıya en erken <strong id="ri-val"></strong> sonra tekrar gönderilebilir.</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">② Mail Listesi Kaynağı</div>
+    <!-- Kaynak seçici -->
+    <div style="display:flex;gap:6px;margin-bottom:18px">
+      <button class="btn btn-sm" id="src-tab-db" onclick="switchListSource('db')"
+        style="background:linear-gradient(135deg,var(--accent),#8b5cf6);color:#fff">🗄 Veritabanı Tablosu</button>
+      <button class="btn btn-sm btn-outline" id="src-tab-excel" onclick="switchListSource('excel')">📊 Excel Dosyası</button>
+    </div>
+
+    <!-- DB TABLO PANELİ -->
+    <div id="src-db-panel" class="fg">
+      <div style="display:flex;align-items:flex-end;gap:10px">
+        <div class="field" style="flex:1">
+          <label>Tablo Seç <span style="color:var(--err)">*</span></label>
+          <select id="b-db-table" onchange="onDbTableSelect()">
+            <option value="">— Tablo seç —</option>
+          </select>
+        </div>
+        <button class="btn btn-outline btn-sm" onclick="loadDbTables()" style="flex-shrink:0;margin-bottom:1px" title="Tabloları yenile">⟳ Yenile</button>
+      </div>
+      <div id="b-db-loading" style="display:none;font-size:12px;color:var(--muted)">⏳ Tablo okunuyor...</div>
+      <div id="b-db-meta" style="display:none" class="fg">
+        <div class="g2">
+          <div class="field">
+            <label>E-posta Sütunu <span style="color:var(--err)">*</span></label>
+            <select id="b-db-email-col" onchange="updateVarTagsFromDb()"></select>
+          </div>
+          <div class="field">
+            <label>Kişiselleştirme Değişkenleri</label>
+            <select id="b-db-var-cols" multiple style="min-height:80px" onchange="updateVarTagsFromDb()"></select>
+            <div style="font-size:11px;color:var(--muted);margin-top:4px">Ctrl/Cmd çoklu seç. <code>{{kolon}}</code> olarak konu/mesajda kullanılır.</div>
+          </div>
+        </div>
+        <div style="font-size:11px;color:var(--muted)">📌 <strong id="b-db-total" style="color:var(--text)">0</strong> kayıt. Önizleme (ilk 5):</div>
+        <div class="xprev" id="b-db-prev-tbl"></div>
+        <div id="b-db-var-tags-area">
+          <div style="font-size:11px;color:var(--muted);margin-bottom:5px">Tıklayarak konu/mesaja değişken ekleyin:</div>
+          <div class="var-tags" id="b-db-var-tags"></div>
+        </div>
+      </div>
+      <div class="alert" id="db-table-alert"></div>
+    </div>
+
+    <!-- EXCEL PANELİ -->
+    <div id="src-excel-panel" style="display:none" class="fg">
+      <div class="field">
+        <div class="fup" onclick="document.getElementById('b-excel').click()">
+          <input type="file" id="b-excel" accept=".xlsx,.xls" onchange="previewExcel(this)">
+          <div class="fup-icon">📊</div>
+          <div class="fup-txt"><strong>.xlsx veya .xls dosyası seçin</strong><br><span>E-posta listesi içeren Excel dosyası</span></div>
+          <div id="b-excel-fn" class="fup-name"></div>
+        </div>
+        <div id="b-excel-loading" style="display:none;font-size:12px;color:var(--muted);margin-top:8px">⏳ Dosya okunuyor...</div>
+      </div>
+
+      <div id="b-excel-meta" style="display:none" class="fg">
+        <div class="g2">
+          <div class="field">
+            <label>E-posta Sütunu <span style="color:var(--err)">*</span></label>
+            <select id="b-email-col" onchange="updateVarTags()"></select>
+          </div>
+          <div class="field">
+            <label>Kişiselleştirme Değişkenleri <span class="badge">tümünü seç</span></label>
+            <select id="b-var-cols" multiple style="min-height:80px" onchange="updateVarTags()"></select>
+            <div style="font-size:11px;color:var(--muted);margin-top:4px">Ctrl/Cmd ile çoklu seçin. Seçilenler <code>{{kolon}}</code> olarak kullanılabilir.</div>
+          </div>
+        </div>
+        <div style="font-size:11px;color:var(--muted)">📌 <strong id="b-total" style="color:var(--text)">0</strong> satır okundu. Önizleme (ilk 5 satır):</div>
+        <div class="xprev" id="b-prev-tbl"></div>
+        <div id="b-var-tags-area">
+          <div style="font-size:11px;color:var(--muted);margin-bottom:5px">Aşağıya tıklayarak konu veya mesaj alanına değişken ekleyin:</div>
+          <div class="var-tags" id="b-var-tags"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">③ Mesaj İçeriği</div>
+    <div class="fg">
+      <div class="field">
+        <label>Konu <span style="color:var(--err)">*</span></label>
+        <input id="b-subject" placeholder="Merhaba {{Ad}}, size özel bir teklifimiz var!" onfocus="activeTarget='b-subject'">
+      </div>
+      <div class="toggle-row">
+        <span class="tgl-label">HTML modu — alıcılar HTML olarak görür</span>
+        <label class="tgl"><input type="checkbox" id="b-html" checked><span class="tgl-sl"></span></label>
+      </div>
+      <div class="field">
+        <label>Mesaj <span style="color:var(--err)">*</span> <span class="badge">{{KolonAdi}} ile kişiselleştir</span></label>
+        <textarea id="b-body" placeholder="Sayın {{Ad}},&#10;&#10;Mesajınız burada..." style="min-height:160px" onfocus="activeTarget='b-body'"></textarea>
+      </div>
+      <div class="field">
+        <label>Gönderimler Arası Bekleme <span style="color:var(--muted);font-size:10px">(spam önleme)</span></label>
+        <div style="display:flex;align-items:center;gap:12px">
+          <input type="range" id="b-delay" min="100" max="5000" step="100" value="500" style="flex:1;accent-color:var(--accent);padding:0;height:auto" oninput="document.getElementById('b-delay-val').textContent=this.value+'ms'">
+          <span style="font-family:'Space Mono',monospace;font-size:12px;color:var(--accent);min-width:60px;text-align:right" id="b-delay-val">500ms</span>
+        </div>
+      </div>
+      <div class="field"><label>Ek Dosya (opsiyonel)</label>
+        <div class="fup" onclick="document.getElementById('b-att').click()">
+          <input type="file" id="b-att" onchange="showFn(this,'b-att-fn')">
+          <div class="fup-icon">📎</div><div class="fup-txt"><strong>Dosya seç</strong></div>
+          <div id="b-att-fn" class="fup-name"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <button class="btn btn-success btn-full" id="b-send-btn" onclick="startBulk()">
+    <div class="sp" id="b-sp"></div><span id="b-btn-txt">🚀 Toplu Gönderimi Başlat</span>
+  </button>
+  <div class="alert" id="b-alert"></div>
+
+  <div id="b-prog-wrap" style="display:none;margin-top:18px">
+    <div class="card">
+      <div class="card-title">Gönderim Durumu</div>
+      <div class="prog-bg"><div class="prog-fill" id="b-fill"></div></div>
+      <div class="pstats">
+        <span class="ps-ok">✓ <span id="b-ok">0</span> başarılı</span>
+        <span class="ps-err">✗ <span id="b-err">0</span> hatalı</span>
+        <span class="ps-skip">⏭ <span id="b-skip">0</span> atlandı</span>
+        <span class="ps-tot">/ <span id="b-tot">0</span> toplam</span>
+      </div>
+      <div class="logbox" id="b-log"></div>
+    </div>
+  </div>
+</div>
+<!-- Excel'den DB'ye Aktarım Modalı -->
+<div id="excel-import-modal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.8); backdrop-filter:blur(5px); z-index:1000; align-items:center; justify-content:center;">
+  <div style="background:var(--s1); border:1px solid var(--border); border-radius:var(--r3); max-width:700px; width:90%; max-height:90vh; overflow-y:auto; margin:20px; box-shadow:0 20px 40px rgba(0,0,0,0.4);">
+    <div style="padding:24px 28px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center;">
+      <h3 style="font-size:18px; font-weight:600;">📥 Excel Veritabanına Aktar</h3>
+      <button onclick="closeImportModal()" style="background:none; border:none; color:var(--muted); font-size:20px; cursor:pointer;">✕</button>
+    </div>
+    <div style="padding:24px 28px;" id="import-modal-content">
+      <!-- İçerik dinamik olarak doldurulacak -->
+    </div>
+    <div style="padding:16px 28px 24px; border-top:1px solid var(--border); display:flex; gap:12px; justify-content:flex-end;">
+      <button class="btn btn-outline" onclick="closeImportModal()">İptal</button>
+      <button class="btn btn-primary" id="import-confirm-btn" onclick="confirmImport()">Aktar</button>
+    </div>
+  </div>
+</div>
+<!-- ─ GÖNDERİM GEÇMİŞİ ─ -->
+<div class="page" id="p-log">
+  <div class="page-header"><h1>📊 Gönderim Geçmişi</h1><p>Tüm gönderim kayıtları MySQL veritabanında saklanır.</p></div>
+  <div class="card">
+    <div class="log-filters">
+      <select id="lf-sender" onchange="loadLog(1)" style="max-width:180px"><option value="">Tüm göndericiler</option></select>
+      <select id="lf-status" onchange="loadLog(1)">
+        <option value="">Tüm durumlar</option>
+        <option value="sent">✓ Başarılı</option>
+        <option value="failed">✗ Hatalı</option>
+        <option value="skipped">⏭ Atlandı</option>
+      </select>
+      <input id="lf-search" placeholder="E-posta ara..." oninput="loadLog(1)" style="max-width:180px">
+      <button class="btn btn-outline btn-sm" onclick="loadLog(1)">🔍 Filtrele</button>
+      <span style="margin-left:auto;font-size:11px;color:var(--muted)" id="log-count"></span>
+    </div>
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>Tarih</th><th>Gönderici</th><th>Alıcı</th><th>Konu</th><th>Durum</th><th>Hata</th></tr></thead>
+        <tbody id="log-tbody"><tr><td colspan="6" style="text-align:center;color:var(--muted);padding:20px">Yükleniyor...</td></tr></tbody>
+      </table>
+    </div>
+    <div class="pager">
+      <button onclick="loadLog(logPage-1)" id="pg-prev" disabled>← Önceki</button>
+      <span id="pg-info">—</span>
+      <button onclick="loadLog(logPage+1)" id="pg-next" disabled>Sonraki →</button>
+    </div>
+  </div>
+</div>
+
+</main>
+</div>
+
+<script src="{{ url_for('static', filename='js/main.js') }}"></script>
+</body>
+</html>
