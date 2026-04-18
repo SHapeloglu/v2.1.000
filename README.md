@@ -11,7 +11,7 @@ Flask · MySQL · AWS SES · SMTP · REST API
 [![MySQL](https://img.shields.io/badge/MySQL-8.0%2B-4479A1?style=flat-square&logo=mysql&logoColor=white)](https://mysql.com)
 [![AWS SES](https://img.shields.io/badge/AWS-SES-FF9900?style=flat-square&logo=amazonaws&logoColor=white)](https://aws.amazon.com/ses)
 [![License](https://img.shields.io/badge/Lisans-MIT-green?style=flat-square)](LICENSE)
-[![Version](https://img.shields.io/badge/Versiyon-v2.1.0-blue?style=flat-square)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/Versiyon-v2.1.1-blue?style=flat-square)](CHANGELOG.md)
 
 </div>
 
@@ -471,6 +471,12 @@ mysql -u root -p mailsender_pro < migrate_v2.1.002.sql
 
 Detaylı sürüm geçmişi için [CHANGELOG.md](CHANGELOG.md) dosyasına bakın.
 
+### v2.1.1 (2026-04-18)
+- `sns_handler.py` Blueprint entegrasyonu — yeni endpoint: `POST /sns/ses-notification`
+- `disposable_updater.py` worker entegrasyonu — 6 saatlik throttle ile otomatik güncelleme
+- Flask port `5000` → `5002` düzeltmesi (nginx, setup_linux.py, güvenlik kılavuzu)
+- `sns_handler.py` yeniden yazıldı: `_db()` factory pattern, `ses_notification_save()` desteği
+
 ### v2.1.0 (2026-03-13)
 - Audit Log sistemi eklendi
 - Gönderim loguna kullanıcı bilgisi eklendi
@@ -508,6 +514,6 @@ MIT License — detaylar için [LICENSE](LICENSE) dosyasına bakın.
 
 <div align="center">
 
-**MailSender Pro** · v2.1.0 · Self-hosted · Türkçe
+**MailSender Pro** · v2.1.1 · Self-hosted · Türkçe
 
 </div>
