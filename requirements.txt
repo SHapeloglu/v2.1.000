@@ -22,6 +22,9 @@ email-validator==2.2.0
 dnspython==2.7.0
 python-whois==0.9.5  # Opsiyonel: domain yaşı kontrolü için
 
+# E-posta / IMAP
+imap-tools==1.7.2  # Bounce Scanner için IMAP bağlantısı
+
 # HTTP / API
 requests==2.32.3
 

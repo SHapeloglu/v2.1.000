@@ -12,50 +12,128 @@ import time, re, threading, secrets, os
 from functools import wraps
 from flask import request, jsonify, session
 
-# ── Rate Limiter ──────────────────────────────────────────────────────
-_rate_store: dict = {}
-_rate_lock = threading.Lock()
+# ── Rate Limiter (Madde 6: MySQL tabanlı — process-restart ve multi-worker güvenli) ──
+#
+# Strateji: rate_limit_log tablosuna her istek bir satır yazar; pencere içindeki
+# satır sayısını COUNT ile kontrol eder. Bellek yerine MySQL kullandığından:
+#   - Uygulama yeniden başlasa da sayaç sıfırlanmaz
+#   - Birden fazla worker/process aynı limiti paylaşır
+#   - Eski satırlar 10 dakikada bir otomatik temizlenir (TTL mantığı)
+#
+# DB bağlantısı kurulamazsa sessizce bellek tabanlı fallback'e geçer —
+# rate limiting hiçbir zaman isteği engellemez bile olsa uygulama çökmez.
+
+import time as _time
+import threading as _threading
+
+# Fallback: DB yoksa bellek tabanlı
+_fallback_store: dict = {}
+_fallback_lock = _threading.Lock()
+_last_cleanup: float = 0.0
+_CLEANUP_INTERVAL = 600  # saniye
 
 
-def _clean_old(timestamps: list, window: int) -> list:
-    cutoff = time.time() - window
-    return [t for t in timestamps if t > cutoff]
+def _get_ip() -> str:
+    from flask import request as _req
+    forwarded = _req.headers.get('X-Forwarded-For', '')
+    return forwarded.split(',')[0].strip() if forwarded else (_req.remote_addr or 'unknown')
+
+
+def _db_rate_check(ip: str, endpoint: str, max_calls: int, window_seconds: int) -> bool:
+    """
+    MySQL rate_limit_log tablosunu kullanarak istek sayısını kontrol eder.
+    Döner: True → izin ver, False → limit aşıldı.
+    """
+    global _last_cleanup
+    try:
+        import database as _db
+        conn = _db.get_connection()
+        try:
+            with conn.cursor() as cur:
+                # Pencere içindeki istek sayısı
+                cur.execute(
+                    "SELECT COUNT(*) AS cnt FROM rate_limit_log "
+                    "WHERE ip=%s AND endpoint=%s "
+                    "AND hit_at >= NOW(3) - INTERVAL %s SECOND",
+                    (ip, endpoint, window_seconds)
+                )
+                row = cur.fetchone()
+                count = row['cnt'] if row else 0
+
+                if count >= max_calls:
+                    return False  # limit aşıldı
+
+                # İstek kaydı ekle
+                cur.execute(
+                    "INSERT INTO rate_limit_log (ip, endpoint) VALUES (%s, %s)",
+                    (ip, endpoint)
+                )
+            conn.commit()
+
+            # Periyodik temizlik: 10 dk'dan eski satırları sil
+            now = _time.time()
+            if now - _last_cleanup > _CLEANUP_INTERVAL:
+                _last_cleanup = now
+                try:
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            "DELETE FROM rate_limit_log WHERE hit_at < NOW(3) - INTERVAL 600 SECOND"
+                        )
+                    conn.commit()
+                except Exception:
+                    pass
+        finally:
+            conn.close()
+        return True
+    except Exception:
+        # DB erişim hatası → bellek tabanlı fallback
+        return _fallback_rate_check(ip, endpoint, max_calls, window_seconds)
+
+
+def _fallback_rate_check(ip: str, endpoint: str, max_calls: int, window_seconds: int) -> bool:
+    """Bellek tabanlı fallback — sadece DB erişilemediğinde kullanılır."""
+    key = f"{ip}:{endpoint}"
+    now = _time.time()
+    cutoff = now - window_seconds
+    with _fallback_lock:
+        timestamps = [t for t in _fallback_store.get(key, []) if t > cutoff]
+        if len(timestamps) >= max_calls:
+            return False
+        timestamps.append(now)
+        _fallback_store[key] = timestamps
+    return True
 
 
 def rate_limit(max_calls: int, window_seconds: int = 60):
     """
     IP tabanlı istek hızı sınırlayıcı decorator.
+    MySQL rate_limit_log tablosunu kullanır; DB yoksa bellek tabanlı fallback.
     Proxy arkasında X-Forwarded-For header'ını da kontrol eder.
     """
     def decorator(f):
+        endpoint_name = f.__name__
+
         @wraps(f)
         def wrapped(*args, **kwargs):
-            # Proxy arkasında gerçek IP'yi al
-            forwarded = request.headers.get('X-Forwarded-For', '')
-            ip = forwarded.split(',')[0].strip() if forwarded else (request.remote_addr or 'unknown')
-            now = time.time()
-            with _rate_lock:
-                timestamps = _clean_old(_rate_store.get(ip, []), window_seconds)
-                if len(timestamps) >= max_calls:
-                    from flask import Response as _Resp
-                    import json as _json
-                    accepts = request.headers.get('Accept', '')
-                    if 'text/event-stream' in accepts:
-                        msg = _json.dumps({
-                            'type': 'error',
-                            'message': f'Çok fazla istek. Lütfen {window_seconds} saniye bekleyin.'
-                        })
-                        return _Resp(f'data: {msg}\n\n', mimetype='text/event-stream', status=429)
-                    return jsonify({
-                        'success': False,
+            ip = _get_ip()
+            allowed = _db_rate_check(ip, endpoint_name, max_calls, window_seconds)
+            if not allowed:
+                from flask import Response as _Resp, request as _req
+                import json as _json
+                accepts = _req.headers.get('Accept', '')
+                if 'text/event-stream' in accepts:
+                    msg = _json.dumps({
+                        'type': 'error',
                         'message': f'Çok fazla istek. Lütfen {window_seconds} saniye bekleyin.'
-                    }), 429
-                timestamps.append(now)
-                _rate_store[ip] = timestamps
+                    })
+                    return _Resp(f'data: {msg}\n\n', mimetype='text/event-stream', status=429)
+                return jsonify({
+                    'success': False,
+                    'message': f'Çok fazla istek. Lütfen {window_seconds} saniye bekleyin.'
+                }), 429
             return f(*args, **kwargs)
         return wrapped
     return decorator
-
 
 # ── CSRF Koruması (Double-Submit Cookie) ─────────────────────────────
 def generate_csrf_token() -> str:

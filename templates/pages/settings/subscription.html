@@ -97,13 +97,18 @@
         </div>
         <div class="field" style="max-width:220px">
             <label>Sebep</label>
-            <select id="supp-add-reason">
+            <select id="supp-add-reason" onchange="toggleSuppNote()">
                 <option value="manual">✋ Manuel</option>
                 <option value="unsubscribe">↩ Abonelik İptali</option>
                 <option value="bounce">↩ Bounce</option>
                 <option value="complaint">⚠ Şikayet</option>
                 <option value="invalid">✗ Geçersiz</option>
+                <option value="__other__">✏️ Diğer...</option>
             </select>
+        </div>
+        <div class="field" id="supp-add-note-wrap" style="display:none">
+            <label>Özel Sebep <span style="color:var(--muted);font-weight:400">(isteğe bağlı)</span></label>
+            <input id="supp-add-note" placeholder="Örn: müşteri talebi, test hesabı...">
         </div>
     </div>
     <div class="btn-row">
@@ -135,17 +140,22 @@
         <div class="g2">
             <div class="field">
                 <label>Sebep</label>
-                <select id="dom-add-reason">
+                <select id="dom-add-reason" onchange="toggleDomNote()">
                     <option value="manual">Manuel</option>
                     <option value="competitor">Rakip domain</option>
                     <option value="spam">Spam kaynağı</option>
                     <option value="invalid">Geçersiz domain</option>
                     <option value="internal">İç kullanım</option>
+                    <option value="__other__">✏️ Diğer...</option>
                 </select>
             </div>
             <div class="field">
-                <label>Not (isteğe bağlı)</label>
+                <label>Not <span style="color:var(--muted);font-weight:400">(isteğe bağlı)</span></label>
                 <input id="dom-add-note" placeholder="Bu domain neden engellendi?">
+            </div>
+            <div class="field" id="dom-add-custom-wrap" style="display:none">
+                <label>Özel Sebep</label>
+                <input id="dom-add-custom-reason" placeholder="Özel sebep yazın...">
             </div>
         </div>
         <div class="btn-row">
@@ -175,7 +185,7 @@
         🚫 Suppression Listesi
         <span id="supp-count" style="font-size:12px;font-weight:400;color:var(--muted);margin-left:8px"></span>
     </div>
-    <div style="display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap">
+    <div style="display:flex;gap:10px;margin-bottom:10px;flex-wrap:wrap;align-items:center">
         <input id="supp-search" placeholder="E-posta ara..." style="flex:1;min-width:180px" oninput="loadSuppressionPage(1)">
         <select id="supp-reason" onchange="loadSuppressionPage(1)" style="width:160px">
             <option value="">Tüm sebepler</option>
@@ -185,6 +195,27 @@
             <option value="invalid">Geçersiz</option>
         </select>
         <button class="btn btn-outline btn-sm" onclick="loadSuppressionPage(1)">🔄 Yenile</button>
+        <label class="btn btn-outline btn-sm" style="cursor:pointer;gap:6px" title="CSV dosyasındaki adresleri suppression listesinde ara">
+            📂 CSV'den Ara
+            <input type="file" id="supp-csv-file" accept=".csv,.txt" style="display:none" onchange="csvAra(this)">
+        </label>
+    </div>
+    <!-- CSV sonuç kutusu (başta gizli) -->
+    <div id="csv-result-box" style="display:none;margin-bottom:14px;padding:14px 16px;background:var(--s2);border:1px solid var(--border);border-radius:var(--r);font-size:13px">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+            <strong id="csv-result-title" style="font-size:13px"></strong>
+            <button class="btn btn-outline btn-sm" onclick="csvTemizle()">✕ Kapat</button>
+        </div>
+        <div style="display:flex;gap:20px;flex-wrap:wrap;margin-bottom:4px">
+            <span>📋 Toplam: <strong id="csv-n-total">—</strong></span>
+            <span style="color:var(--err)">🚫 Engelli: <strong id="csv-n-blocked">—</strong></span>
+            <span style="color:var(--ok)">✅ Temiz: <strong id="csv-n-clean">—</strong></span>
+        </div>
+        <div id="csv-blocked-wrap" style="display:none;margin-top:10px">
+            <div style="font-size:11px;font-weight:600;color:var(--err);margin-bottom:6px;text-transform:uppercase;letter-spacing:.05em">Engelli adresler</div>
+            <div id="csv-blocked-list" style="max-height:180px;overflow-y:auto;background:var(--s1);border:1px solid var(--border);border-radius:8px;padding:10px;font-family:'Space Mono',monospace;font-size:11px;line-height:1.9"></div>
+            <button class="btn btn-outline btn-sm" style="margin-top:8px" onclick="csvKopyala()">📋 Listeyi Kopyala</button>
+        </div>
     </div>
     <div style="overflow-x:auto">
         <table style="width:100%;border-collapse:collapse;font-size:13px">
@@ -192,6 +223,7 @@
                 <tr style="border-bottom:1px solid var(--border)">
                     <th style="text-align:left;padding:8px 10px;color:var(--muted);font-weight:500">E-posta</th>
                     <th style="text-align:left;padding:8px 10px;color:var(--muted);font-weight:500">Sebep</th>
+                    <th style="text-align:left;padding:8px 10px;color:var(--muted);font-weight:500">Not</th>
                     <th style="text-align:left;padding:8px 10px;color:var(--muted);font-weight:500">Kaynak</th>
                     <th style="text-align:left;padding:8px 10px;color:var(--muted);font-weight:500">Tarih</th>
                     <th style="padding:8px 10px"></th>
@@ -229,9 +261,27 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('purge-table').addEventListener('change', onPurgeTableChangePage);
 });
 
+function toggleSuppNote() {
+    const sel  = document.getElementById('supp-add-reason').value;
+    const wrap = document.getElementById('supp-add-note-wrap');
+    wrap.style.display = (sel === '__other__') ? '' : 'none';
+    if (sel !== '__other__') document.getElementById('supp-add-note').value = '';
+}
+
+function toggleDomNote() {
+    const sel  = document.getElementById('dom-add-reason').value;
+    const wrap = document.getElementById('dom-add-custom-wrap');
+    wrap.style.display = (sel === '__other__') ? '' : 'none';
+    if (sel !== '__other__') document.getElementById('dom-add-custom-reason').value = '';
+}
+
 async function addSuppressionManual() {
     const raw    = document.getElementById('supp-add-emails').value.trim();
-    const reason = document.getElementById('supp-add-reason').value;
+    const selVal = document.getElementById('supp-add-reason').value;
+    const note   = document.getElementById('supp-add-note').value.trim();
+    // "Diğer..." seçilmişse özel metni reason olarak gönder; backend manual'a map'ler, note'a kaydeder
+    const reason = (selVal === '__other__') ? (note || 'manual') : selVal;
+    const sendNote = (selVal === '__other__') ? '' : note;  // Diğer'de note zaten reason içinde
     const sp     = document.getElementById('supp-add-sp');
     const txt    = document.getElementById('supp-add-txt');
     const al     = document.getElementById('supp-add-alert');
@@ -251,12 +301,15 @@ async function addSuppressionManual() {
         const d = await (await fetch('/api/suppression', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({emails, reason})
+            body: JSON.stringify({emails, reason, note: sendNote})
         })).json();
         al.textContent = d.message;
         al.className   = d.success ? 'alert ok show' : 'alert err show';
         if (d.success) {
             document.getElementById('supp-add-emails').value = '';
+            document.getElementById('supp-add-note').value   = '';
+            document.getElementById('supp-add-reason').value = 'manual';
+            toggleSuppNote();
             loadSuppressionPage(1);
             loadStatsPage();
             setTimeout(() => al.className = 'alert', 4000);
@@ -333,6 +386,7 @@ async function loadSuppressionPage(page) {
         tb.innerHTML=d.data.map(r=>`<tr style="border-bottom:1px solid var(--border)">
             <td style="padding:9px 10px;font-size:12px;font-family:'Space Mono',monospace">${esc(r.email)}</td>
             <td style="padding:9px 10px">${REASON_LABELS[r.reason]||esc(r.reason)}</td>
+            <td style="padding:9px 10px;font-size:11px;color:var(--muted)">${r.note ? esc(r.note) : '—'}</td>
             <td style="padding:9px 10px;font-size:11px;color:var(--muted)">${esc(r.source||'—')}</td>
             <td style="padding:9px 10px;font-size:11px;color:var(--muted);white-space:nowrap">${esc(r.created_at||'')}</td>
             <td style="padding:9px 10px;text-align:right"><button class="btn btn-outline btn-sm" onclick="removeSuppressionPage('${esc(r.email)}')">✕ Kaldır</button></td>
@@ -344,6 +398,90 @@ async function loadSuppressionPage(page) {
         document.getElementById('supp-pg-next').disabled=(page>=pages);
     } catch(e) { console.error(e); }
 }
+
+/* ── CSV Arama ─────────────────────────────────────────────────────── */
+async function csvAra(input) {
+    const file = input.files[0];
+    if (!file) return;
+    input.value = '';   // aynı dosya tekrar seçilebilsin
+
+    const text   = await file.text();
+    // Metin içindeki tüm geçerli e-posta adreslerini ayıkla
+    const found  = text.match(/[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/g) || [];
+    const emails = [...new Set(found.map(e => e.toLowerCase()))];
+
+    if (!emails.length) { alert('CSV içinde geçerli e-posta adresi bulunamadı.'); return; }
+
+    // Sonuç kutusunu hazırla
+    const box = document.getElementById('csv-result-box');
+    document.getElementById('csv-result-title').textContent = `📂 ${file.name} — kontrol ediliyor...`;
+    document.getElementById('csv-n-total').textContent   = emails.length;
+    document.getElementById('csv-n-blocked').textContent = '…';
+    document.getElementById('csv-n-clean').textContent   = '…';
+    document.getElementById('csv-blocked-wrap').style.display = 'none';
+    box.style.display = 'block';
+
+    // Sunucuya toplu sorgu — /api/suppression/batch-check
+    try {
+        const resp = await fetch('/api/suppression/batch-check', {
+            method:  'POST',
+            headers: {'Content-Type': 'application/json'},
+            body:    JSON.stringify({emails})
+        });
+        if (resp.ok) {
+            const d = await resp.json();
+            if (d.success) { csvGoster(file.name, emails.length, d.blocked); return; }
+        }
+    } catch(_) {}
+
+    // Fallback: batch-check yoksa tek tek sorgula (max 300)
+    await csvFallback(file.name, emails);
+}
+
+function csvGoster(fname, total, blocked) {
+    const clean = total - blocked.length;
+    document.getElementById('csv-result-title').textContent = `📂 ${fname} — tarama tamamlandı`;
+    document.getElementById('csv-n-total').textContent   = total;
+    document.getElementById('csv-n-blocked').textContent = blocked.length;
+    document.getElementById('csv-n-clean').textContent   = clean;
+    if (blocked.length) {
+        document.getElementById('csv-blocked-wrap').style.display = 'block';
+        document.getElementById('csv-blocked-list').innerHTML =
+            blocked.map(e => `<div style="color:var(--err);padding:1px 0">${esc(e)}</div>`).join('');
+    }
+}
+
+async function csvFallback(fname, emails) {
+    const MAX = 300;
+    const batch = emails.slice(0, MAX);
+    const blocked = [];
+    for (const email of batch) {
+        try {
+            const d = await (await fetch(`/api/suppression?search=${encodeURIComponent(email)}&per_page=5`)).json();
+            if (d.data && d.data.some(r => r.email === email)) blocked.push(email);
+        } catch(_) {}
+    }
+    const label = emails.length > MAX ? `${fname} (ilk ${MAX} adres)` : fname;
+    csvGoster(label, batch.length, blocked);
+}
+
+function csvTemizle() {
+    document.getElementById('csv-result-box').style.display = 'none';
+    document.getElementById('csv-blocked-wrap').style.display = 'none';
+    document.getElementById('csv-blocked-list').innerHTML = '';
+}
+
+function csvKopyala() {
+    const liste = [...document.getElementById('csv-blocked-list').querySelectorAll('div')]
+        .map(d => d.textContent.trim()).join('\n');
+    navigator.clipboard.writeText(liste).then(() => {
+        const btn = event.currentTarget;
+        const orig = btn.textContent;
+        btn.textContent = '✅ Kopyalandı!';
+        setTimeout(() => btn.textContent = orig, 2000);
+    });
+}
+/* ─────────────────────────────────────────────────────────────────── */
 
 async function removeSuppressionPage(email) {
     if (!confirm(`"${email}" adresini listeden kaldırmak istediğinize emin misiniz?`)) return;
@@ -468,11 +606,13 @@ async function loadDomainList() {
 }
 
 async function addDomainBlock() {
-    const raw    = (document.getElementById('dom-add-input').value || '').trim();
-    const reason = document.getElementById('dom-add-reason').value;
-    const note   = (document.getElementById('dom-add-note').value || '').trim();
-    const sp     = document.getElementById('dom-add-sp');
-    const txt    = document.getElementById('dom-add-txt');
+    const raw        = (document.getElementById('dom-add-input').value || '').trim();
+    const selVal     = document.getElementById('dom-add-reason').value;
+    const customReason = (document.getElementById('dom-add-custom-reason').value || '').trim();
+    const reason     = (selVal === '__other__') ? (customReason || 'manual') : selVal;
+    const note       = (document.getElementById('dom-add-note').value || '').trim();
+    const sp         = document.getElementById('dom-add-sp');
+    const txt        = document.getElementById('dom-add-txt');
 
     if (!raw) { showAlert('dom-add-alert', 'En az bir domain girin.', 'err'); return; }
 
@@ -492,10 +632,13 @@ async function addDomainBlock() {
             d.success ? 'ok' : 'err');
 
         if (d.success) {
-            document.getElementById('dom-add-input').value = '';
-            document.getElementById('dom-add-note').value  = '';
+            document.getElementById('dom-add-input').value          = '';
+            document.getElementById('dom-add-note').value           = '';
+            document.getElementById('dom-add-custom-reason').value  = '';
+            document.getElementById('dom-add-reason').value         = 'manual';
+            toggleDomNote();
             loadDomainList();
-            loadStatsPage();   // istatistik sayaçlarını da yenile
+            loadStatsPage();
         }
     } catch(e) {
         showAlert('dom-add-alert', 'Bağlantı hatası: ' + e, 'err');

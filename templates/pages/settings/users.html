@@ -48,7 +48,7 @@
                 </div>
             </div>
             <div class="field"><label>Rol</label>
-                <select id="uf-role">
+                <select id="uf-role" onchange="onRoleChange()">
                     <option value="editor">Editor</option>
                     <option value="admin">Admin</option>
                 </select>
@@ -110,6 +110,11 @@ const ROLE_LABELS = {
     editor: '<span class="chip chip-off">✏️ Editor</span>',
 };
 
+
+function onRoleChange() {
+    // Rol degisiminde yapilacak islemler buraya eklenebilir
+}
+
 document.addEventListener('DOMContentLoaded', loadUsers);
 
 async function loadUsers() {
@@ -134,7 +139,7 @@ async function loadUsers() {
                 <button class="btn btn-danger btn-sm" onclick="deleteUser(${u.id},'${esc(u.username)}')">🗑</button>
             </td>
         </tr>`).join('');
-    } catch(e) { tbody.innerHTML = '<tr><td colspan="6" style="color:var(--err);padding:20px">Yüklenemedi.</td></tr>'; }
+    } catch(e) { tbody.innerHTML = '<tr><td colspan="5" style="color:var(--err);padding:20px">Yüklenemedi.</td></tr>'; }
 }
 
 function showAddUser() {

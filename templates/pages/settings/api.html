@@ -64,6 +64,8 @@
                         <option value="X-AUTH-TOKEN">X-AUTH-TOKEN (Mailrelay)</option>
                         <option value="Bearer">Authorization: Bearer</option>
                         <option value="Token">Authorization: Token</option>
+                        <option value="Basic">Authorization: Basic (Mailjet)</option>
+                        <option value="SendPulse">OAuth2 — SendPulse</option>
                         <option value="api-key">api-key (Brevo)</option>
                         <option value="apikey">apikey</option>
                         <option value="X-API-KEY">X-API-KEY</option>
@@ -74,11 +76,31 @@
                     <label>Özel Header Adı</label>
                     <input id="api-auth-custom" placeholder="X-My-Token">
                 </div>
-                <div class="field">
+                <div class="field" id="token-wrap">
                     <label>Token * <span style="font-size:10px;color:var(--muted)">(düzenlemede boş = değiştirme)</span></label>
                     <div class="pw-wrap">
                         <input type="password" id="api-token" placeholder="••••••••">
                         <button class="pw-eye" onclick="togglePw('api-token',this)">👁</button>
+                    </div>
+                </div>
+                <!-- Basic Auth (Mailjet gibi) için ayrı kutular -->
+                <div id="basic-auth-wrap" style="display:none">
+                    <div class="field">
+                        <label id="basic-key-label">Public Key (API Key) *</label>
+                        <div class="pw-wrap">
+                            <input type="password" id="api-basic-key" placeholder="••••••••">
+                            <button class="pw-eye" onclick="togglePw('api-basic-key',this)">👁</button>
+                        </div>
+                    </div>
+                    <div class="field">
+                        <label id="basic-secret-label">Secret Key *</label>
+                        <div class="pw-wrap">
+                            <input type="password" id="api-basic-secret" placeholder="••••••••">
+                            <button class="pw-eye" onclick="togglePw('api-basic-secret',this)">👁</button>
+                        </div>
+                    </div>
+                    <div id="basic-fields-hint" style="font-size:11px;color:var(--muted);margin-top:-6px;margin-bottom:8px">
+                        Düzenlemede boş bırakırsanız kayıtlı değer korunur.
                     </div>
                 </div>
             </div>
@@ -103,6 +125,9 @@
                     <button class="btn btn-outline btn-sm" onclick="loadPreset('postmark')" style="font-size:11px">📬 Postmark</button>
                     <button class="btn btn-outline btn-sm" onclick="loadPreset('resend')" style="font-size:11px">⚡ Resend</button>
                     <button class="btn btn-outline btn-sm" onclick="loadPreset('brevo')" style="font-size:11px">💙 Brevo</button>
+                    <button class="btn btn-outline btn-sm" onclick="loadPreset('mailtrap')" style="font-size:11px">🪤 Mailtrap</button>
+                    <button class="btn btn-outline btn-sm" onclick="loadPreset('mailjet')" style="font-size:11px">✈ Mailjet</button>
+                    <button class="btn btn-outline btn-sm" onclick="loadPreset('sendpulse')" style="font-size:11px">💚 SendPulse</button>
                     <button class="btn btn-outline btn-sm" onclick="loadPreset('generic')" style="font-size:11px">🔧 Genel</button>
                 </div>
             </div>
@@ -128,6 +153,13 @@
 
     </div><!-- /fg -->
 
+    <div class="g2" style="margin-top:8px">
+        <div class="field">
+            <label>Günlük Limit <span style="color:var(--muted);font-size:10px">(0 = limitsiz)</span></label>
+            <input type="number" id="api-daily-limit" placeholder="Örn: 80" min="0" value="0">
+            <span style="font-size:11px;color:var(--muted)">Günlük bu kadar mail gönderilince gönderim durur (UTC gece sıfırlanır)</span>
+        </div>
+    </div>
     <div class="btn-row" style="margin-top:16px">
         <button class="btn btn-primary" onclick="saveApi()">
             <div class="sp" id="api-sp"></div>
@@ -299,6 +331,42 @@ const PRESETS = {
             "htmlContent": "HTML_CONTENT"
         }
     },
+    mailtrap: {
+        _host: 'send.api.mailtrap.io', _endpoint: '/api/send',
+        _auth: 'Bearer', _method: 'POST',
+        payload: {
+            "from":    {"email": "FROM_EMAIL", "name": "FROM_NAME"},
+            "to":      [{"email": "RECIPIENT_EMAIL", "name": "RECIPIENT_NAME"}],
+            "subject": "SUBJECT_TEXT",
+            "html":    "HTML_CONTENT"
+        }
+    },
+    mailjet: {
+        _host: 'api.mailjet.com', _endpoint: '/v3.1/send',
+        _auth: 'Basic', _method: 'POST',
+        payload: {
+            "Messages": [
+                {
+                    "From":    {"Email": "FROM_EMAIL", "Name": "FROM_NAME"},
+                    "To":      [{"Email": "RECIPIENT_EMAIL", "Name": "RECIPIENT_NAME"}],
+                    "Subject": "SUBJECT_TEXT",
+                    "HTMLPart": "HTML_CONTENT"
+                }
+            ]
+        }
+    },
+    sendpulse: {
+        _host: 'api.sendpulse.com', _endpoint: '/smtp/emails',
+        _auth: 'SendPulse', _method: 'POST',
+        payload: {
+            "email": {
+                "from":    {"name": "FROM_NAME",      "email": "FROM_EMAIL"},
+                "to":      [{"name": "RECIPIENT_NAME", "email": "RECIPIENT_EMAIL"}],
+                "subject": "SUBJECT_TEXT",
+                "html":    "HTML_CONTENT"
+            }
+        }
+    },
     generic: {
         _host: '', _endpoint: '', _auth: 'X-AUTH-TOKEN', _method: 'POST',
         payload: {
@@ -354,7 +422,29 @@ function validatePayloadJson(el) {
 
 function onAuthTypeChange() {
     const v = document.getElementById('api-auth-type').value;
-    document.getElementById('auth-custom-wrap').style.display = v === 'custom' ? 'block' : 'none';
+    const isBasic      = v === 'Basic';
+    const isSendPulse  = v === 'SendPulse';
+    const useTwoFields = isBasic || isSendPulse;
+
+    document.getElementById('auth-custom-wrap').style.display  = v === 'custom'    ? 'block' : 'none';
+    document.getElementById('token-wrap').style.display        = useTwoFields      ? 'none'  : 'block';
+    document.getElementById('basic-auth-wrap').style.display   = useTwoFields      ? 'block' : 'none';
+
+    // Etiketleri servise göre güncelle
+    const keyLabel    = document.getElementById('basic-key-label');
+    const secretLabel = document.getElementById('basic-secret-label');
+    const hintEl      = document.getElementById('basic-fields-hint');
+    if (keyLabel && secretLabel && hintEl) {
+        if (isSendPulse) {
+            keyLabel.textContent    = 'Client ID (REST API ID) *';
+            secretLabel.textContent = 'Client Secret *';
+            hintEl.innerHTML = '⚙ SendPulse: <a href="https://login.sendpulse.com/settings/#api" target="_blank" style="color:var(--accent)">sendpulse.com → API</a> sayfasından alabilirsiniz.';
+        } else {
+            keyLabel.textContent    = 'Public Key (API Key) *';
+            secretLabel.textContent = 'Secret Key *';
+            hintEl.innerHTML = '⚙ Mailjet: <a href="https://app.mailjet.com/account/apikeys" target="_blank" style="color:var(--accent)">mailjet.com → API Keys</a> sayfasından alabilirsiniz.';
+        }
+    }
 }
 
 function insertVar(v) {
@@ -441,8 +531,10 @@ async function editApi(id) {
     document.getElementById('api-method').value   = s.api_method  || 'POST';
     document.getElementById('api-token').value    = '';
     document.getElementById('api-token').placeholder = 'Kayıtlı (boş = değiştirme)';
+    document.getElementById('api-basic-key').value    = '';
+    document.getElementById('api-basic-secret').value = '';
 
-    const knownTypes = ['X-AUTH-TOKEN','Bearer','Token','api-key','apikey','X-API-KEY'];
+    const knownTypes = ['X-AUTH-TOKEN','Bearer','Token','Basic','SendPulse','api-key','apikey','X-API-KEY'];
     const at = s.api_auth_type || 'X-AUTH-TOKEN';
     if (knownTypes.includes(at)) {
         document.getElementById('api-auth-type').value = at;
@@ -452,6 +544,7 @@ async function editApi(id) {
         document.getElementById('api-auth-custom').value = at;
         document.getElementById('auth-custom-wrap').style.display = 'block';
     }
+    onAuthTypeChange();
 
     const tpl = s.api_payload_tpl;
     if (tpl) {
@@ -460,6 +553,7 @@ async function editApi(id) {
         validatePayloadJson(document.getElementById('api-payload'));
     }
 
+    document.getElementById('api-daily-limit').value   = s.daily_limit || 0;
     document.getElementById('api-form-title').textContent = '✏ Düzenle: ' + s.name;
     document.getElementById('api-cancel-btn').style.display = 'inline-flex';
     document.getElementById('api-btn-txt').textContent = '💾 Güncelle';
@@ -469,13 +563,15 @@ async function editApi(id) {
 
 function cancelApi() {
     _editApiId = null;
-    ['api-name','api-email','api-host','api-endpoint','api-token','api-auth-custom'].forEach(id => {
+    ['api-name','api-email','api-host','api-endpoint','api-token','api-auth-custom','api-basic-key','api-basic-secret'].forEach(id => {
         const el = document.getElementById(id); if (el) el.value = '';
     });
     document.getElementById('api-token').placeholder = '••••••••';
     document.getElementById('api-auth-type').value = 'X-AUTH-TOKEN';
     document.getElementById('api-method').value = 'POST';
     document.getElementById('auth-custom-wrap').style.display = 'none';
+    document.getElementById('token-wrap').style.display = 'block';
+    document.getElementById('basic-auth-wrap').style.display = 'none';
     loadPreset('mailrelay');
     document.getElementById('api-form-title').textContent = 'Yeni API Gönderici';
     document.getElementById('api-cancel-btn').style.display = 'none';
@@ -506,6 +602,23 @@ async function saveApi() {
         }
     }
 
+    // Basic Auth (Mailjet) ve SendPulse: iki ayrı kutudan key:secret birleştir
+    let apiToken = '';
+    if (authType === 'Basic' || authType === 'SendPulse') {
+        const bKey    = (document.getElementById('api-basic-key').value    || '').trim();
+        const bSecret = (document.getElementById('api-basic-secret').value || '').trim();
+        if (bKey && bSecret) {
+            apiToken = bKey + ':' + bSecret;
+        } else if (bKey || bSecret) {
+            const label = authType === 'SendPulse' ? 'Client ID ve Client Secret' : 'Public Key ve Secret Key';
+            showAlert('api-alert', `${label} alanlarının ikisi de doldurulmalıdır.`, 'err');
+            sp.style.display = 'none'; btxt.textContent = '💾 Kaydet'; return;
+        }
+        // İkisi de boşsa düzenleme modunda mevcut değer korunur (apiToken = '' kalır)
+    } else {
+        apiToken = document.getElementById('api-token').value;
+    }
+
     const p = {
         name:            document.getElementById('api-name').value.trim(),
         email:           document.getElementById('api-email').value.trim(),
@@ -513,10 +626,11 @@ async function saveApi() {
         api_host:        document.getElementById('api-host').value.trim(),
         api_endpoint:    document.getElementById('api-endpoint').value.trim(),
         api_auth_type:   authType,
-        api_auth_token:  document.getElementById('api-token').value,
+        api_auth_token:  apiToken,
         api_method:      document.getElementById('api-method').value,
         api_payload_tpl: JSON.parse(payloadEl.value),
         is_active:       1,
+        daily_limit:     parseInt(document.getElementById('api-daily-limit').value)||0,
     };
 
     if (!p.name || !p.email || !p.api_host || !p.api_endpoint) {

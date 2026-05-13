@@ -60,6 +60,18 @@
         </div>
     </div>
 
+    <div class="field" style="margin-top:4px">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;user-select:none">
+            <input type="checkbox" id="tpl-is-default" style="width:16px;height:16px">
+            <span>
+                <strong>Varsayılan şablon olarak ayarla</strong>
+                <span style="font-size:11px;color:var(--muted);margin-left:6px">
+                    — Toplu gönderim sayfası açıldığında otomatik yüklenir
+                </span>
+            </span>
+        </label>
+    </div>
+
     <div class="alert" id="tpl-alert"></div>
 
     <div class="btn-row">
@@ -141,7 +153,7 @@ function renderGroup(title, items) {
     const rows = items.map(t => `
     <tr style="border-bottom:1px solid var(--border)">
         <!-- Şablon adı -->
-        <td style="padding:10px 12px;font-weight:500;min-width:160px">${esc(t.name)}</td>
+        <td style="padding:10px 12px;font-weight:500;min-width:160px">${esc(t.name)}${t.is_default ? ' <span class="chip chip-ok" style="font-size:10px;padding:1px 5px">★ Varsayılan</span>' : ''}</td>
         <!-- İçerik önizlemesi — uzunsa kısalt -->
         <td style="padding:10px 12px;font-size:12px;color:var(--muted);max-width:400px">
             <div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:380px">
@@ -204,6 +216,7 @@ function editTpl(tplId) {
     document.getElementById('tpl-type').disabled = true;  // Tip değiştirilemez
     document.getElementById('tpl-name').value = tpl.name;
     document.getElementById('tpl-form-title').textContent = `✏️ Şablon Düzenle — ${tpl.name}`;
+    document.getElementById('tpl-is-default').checked = !!tpl.is_default;
     document.getElementById('tpl-alert').style.display = 'none';
 
     onTplTypeChange();  // Doğru input'u göster (subject=input, body=textarea)
@@ -227,6 +240,7 @@ function resetTplForm() {
     document.getElementById('tpl-content-input').value   = '';
     document.getElementById('tpl-content-textarea').value = '';
     document.getElementById('tpl-form-title').textContent = '➕ Yeni Şablon';
+    document.getElementById('tpl-is-default').checked    = false;
     document.getElementById('tpl-alert').style.display   = 'none';
     onTplTypeChange();
 }
@@ -253,17 +267,18 @@ async function saveTpl() {
         let d;
         if (tplId) {
             /* Güncelleme */
+            const isDefault = document.getElementById('tpl-is-default').checked;
             d = await (await fetch(`/api/templates/${tplId}`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ name, content })
+                body: JSON.stringify({ name, content, is_default: isDefault })
             })).json();
         } else {
             /* Yeni oluştur */
             d = await (await fetch('/api/templates/create', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ type, name, content })
+                body: JSON.stringify({ type, name, content, is_default: document.getElementById('tpl-is-default').checked })
             })).json();
         }
 

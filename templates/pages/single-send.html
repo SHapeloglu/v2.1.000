@@ -128,6 +128,67 @@
         loadSenderSelects();
     });
 
+    /* ── Tek Mail Gönder ────────────────────────────────────────── */
+    async function sendSingle() {
+        const sender_id = document.getElementById('c-sender').value;
+        const to        = document.getElementById('c-to').value.trim();
+        const subject   = document.getElementById('c-subject').value.trim();
+        const body      = document.getElementById('c-body').value.trim();
+        const html_mode = document.getElementById('c-html').checked;
+        const unsubscribe = document.getElementById('c-unsub').checked;
+        const fileInput = document.getElementById('c-file');
+
+        if (!sender_id) { showAlert('c-alert', 'Lütfen gönderici seçin.', 'err'); return; }
+        if (!to)        { showAlert('c-alert', 'Alıcı e-posta adresi gerekli.', 'err'); return; }
+        if (!subject)   { showAlert('c-alert', 'Konu gerekli.', 'err'); return; }
+        if (!body)      { showAlert('c-alert', 'Mesaj içeriği gerekli.', 'err'); return; }
+
+        // Buton durumu
+        const sp  = document.getElementById('c-sp');
+        const btn = document.getElementById('c-btn-txt');
+        sp.style.display = 'block';
+        btn.textContent  = 'Gönderiliyor...';
+        hideAlert('c-alert');
+
+        try {
+            const fd = new FormData();
+            fd.append('sender_id',        sender_id);
+            fd.append('to',               to);
+            fd.append('subject',          subject);
+            fd.append('body',             body);
+            fd.append('html_mode',        html_mode);
+            fd.append('include_unsubscribe', unsubscribe);
+            if (fileInput.files.length)   fd.append('attachment', fileInput.files[0]);
+
+            const resp = await fetch('/api/send/single', { method: 'POST', body: fd });
+            const d    = await resp.json();
+
+            if (d.success) {
+                showAlert('c-alert',
+                    `✅ Mail gönderildi → ${esc(to)}` +
+                    (d.message_id ? ` (ID: ${esc(d.message_id)})` : ''), 'ok');
+                // Formu temizle
+                document.getElementById('c-to').value      = '';
+                document.getElementById('c-subject').value = '';
+                document.getElementById('c-body').value    = '';
+                document.getElementById('c-file').value    = '';
+                document.getElementById('c-fn').textContent = '';
+            } else {
+                showAlert('c-alert', '❌ ' + (d.message || 'Gönderim başarısız'), 'err');
+            }
+        } catch(e) {
+            showAlert('c-alert', '❌ Sunucu hatası: ' + e.message, 'err');
+        } finally {
+            sp.style.display = 'none';
+            btn.textContent  = 'E-posta Gönder →';
+        }
+    }
+
+    function showFn(input, targetId) {
+        const el = document.getElementById(targetId);
+        if (el && input.files.length) el.textContent = input.files[0].name;
+    }
+
     /* ── Şablon Seçici ──────────────────────────────────────────── */
     let _tplPickerTarget = 'subject';
     let _tplPickerItems  = [];

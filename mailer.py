@@ -50,13 +50,25 @@ def plain_to_html(text: str) -> str:
     """
     return "<pre>{}</pre>".format(text.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;"))
 
+# Şablon derleme önbelleği — aynı şablon string'i bulk loop'ta defalarca kullanılır
+# Template() her çağrıda parse eder; önbellek bunu engeller
+_template_cache: dict = {}
+_TEMPLATE_CACHE_MAX = 50  # Bellek koruma: en fazla 50 farklı şablon sakla
+
 def render_template_str(template_str: str, variables: dict) -> str:
     """
     Jinja2 ile şablon string'ini işler.
     {{AdSoyad}}, {{Şehir}} gibi değişkenleri Excel/DB sütun değerleriyle doldurur.
     Değişken yoksa Jinja2 boş string bırakır (hata vermez).
+    Aynı şablon bulk loop'ta tekrar kullanılırsa önbellekten alınır — yeniden parse edilmez.
     """
-    return Template(template_str).render(**variables)
+    tpl = _template_cache.get(template_str)
+    if tpl is None:
+        if len(_template_cache) >= _TEMPLATE_CACHE_MAX:
+            _template_cache.clear()
+        tpl = Template(template_str)
+        _template_cache[template_str] = tpl
+    return tpl.render(**variables)
 
 def _decrypt_pw(sender_row: dict, field: str = 'password') -> str:
     """
@@ -131,6 +143,59 @@ def smtp_connect(sender_row):
 # set(): O(1) üyelik kontrolü sağlar, büyük listeler için önemli.
 _suppression_cache      = set()   # Küçük harfli e-posta adresleri kümesi
 _suppression_cache_time = 0       # Son güncelleme Unix timestamp
+
+# ── SendPulse OAuth2 Token Önbelleği ──────────────────────────────
+# key: "client_id:client_secret" → value: (access_token, expire_timestamp)
+_sendpulse_token_cache: dict = {}
+
+def _sendpulse_get_token(credentials: str) -> str:
+    """
+    SendPulse OAuth2 access token alır ve önbelleğe saklar.
+    credentials: "client_id:client_secret" formatında DB'den gelen değer.
+    Token süresi dolmadan 60 saniye önce yeniler (expire - 60sn).
+    Hata durumunda Exception fırlatır — gönderim durur, log'a yazılır.
+    """
+    import http.client as _hc, json as _j, ssl as _ssl, time as _t
+
+    now = _t.time()
+    cached = _sendpulse_token_cache.get(credentials)
+    if cached:
+        token, expires_at = cached
+        if now < expires_at - 60:   # 60sn erken yenile
+            return token
+
+    # credentials ayır
+    if ':' not in credentials:
+        raise Exception("SendPulse credentials formatı geçersiz. 'client_id:client_secret' olmalı.")
+    client_id, client_secret = credentials.split(':', 1)
+
+    # Token isteği
+    body = _j.dumps({
+        'grant_type':    'client_credentials',
+        'client_id':     client_id,
+        'client_secret': client_secret,
+    }).encode('utf-8')
+
+    ctx  = _ssl.create_default_context()
+    conn = _hc.HTTPSConnection('api.sendpulse.com', timeout=15, context=ctx)
+    try:
+        conn.request('POST', '/oauth/access_token', body, {
+            'Content-Type': 'application/json',
+            'User-Agent':   'MailSenderPro/1.0',
+        })
+        res  = conn.getresponse()
+        data = _j.loads(res.read().decode('utf-8'))
+    finally:
+        conn.close()
+
+    if res.status != 200 or 'access_token' not in data:
+        raise Exception(f"SendPulse token alınamadı (HTTP {res.status}): {str(data)[:200]}")
+
+    token      = data['access_token']
+    expires_in = int(data.get('expires_in', 3600))
+    _sendpulse_token_cache[credentials] = (token, now + expires_in)
+    print(f"SendPulse OAuth2 token alındı — {expires_in}sn geçerli.")
+    return token
 
 def is_suppressed(email: str) -> bool:
     """
@@ -364,8 +429,9 @@ def send_via_ses(sender_row, recipient, subject, body_html, attachment=None, inc
             send_kwargs['ConfigurationSetName'] = config_set
 
         response = client.send_raw_email(**send_kwargs)
-
-        print(f"SES gönderim başarılı: {response['MessageId']}")
+        msg_id = response.get('MessageId')
+        print(f"SES gönderim başarılı: {recipient} id={msg_id}")
+        return msg_id  # Çağıran taraf log_send'e iletir
 
     except ClientError as e:
         error_code = e.response.get('Error', {}).get('Code', '')
@@ -621,9 +687,18 @@ def send_via_api(sender_row, recipient, subject, body_html, recipient_name='', i
     if at_lower == 'x-auth-token':
         headers['X-AUTH-TOKEN'] = auth_token                      # Mailrelay
     elif at_lower in ('bearer', 'authorization: bearer'):
-        headers['Authorization'] = f'Bearer {auth_token}'         # Brevo, SendGrid
+        headers['Authorization'] = f'Bearer {auth_token}'         # Brevo, SendGrid, Mailtrap
     elif at_lower in ('token', 'authorization: token'):
         headers['Authorization'] = f'Token {auth_token}'          # DRF tabanlı API'ler
+    elif at_lower == 'basic':
+        import base64 as _b64
+        # Mailjet: api_key:api_secret formatında base64 encode
+        encoded = _b64.b64encode(auth_token.encode('utf-8')).decode('utf-8')
+        headers['Authorization'] = f'Basic {encoded}'
+    elif at_lower == 'sendpulse':
+        # SendPulse OAuth2: client_id:client_secret → önce access_token al, sonra Bearer kullan
+        bearer = _sendpulse_get_token(auth_token)
+        headers['Authorization'] = f'Bearer {bearer}'
     elif at_lower == 'api-key':
         headers['api-key'] = auth_token                           # Azure benzeri
     elif at_lower == 'apikey':
@@ -637,53 +712,78 @@ def send_via_api(sender_row, recipient, subject, body_html, recipient_name='', i
     # http.client kullanılır — requests kütüphanesine bağımlılıktan kaçınmak için.
     # timeout=30: yavaş API'ler için yeterli süre.
     # 2xx → başarı | diğer → HTTP {status}: {yanıt} ile hata fırlat (ilk 300 karakter)
-    conn = None
-    MAX_RETRIES = 3
-    for attempt in range(MAX_RETRIES):
-     try:
-        import time as _time
-        ctx  = _ssl.create_default_context()
-        conn = http.client.HTTPSConnection(host, timeout=30, context=ctx)
-        conn.request(method, endpoint, payload_str.encode('utf-8'), headers)
-        res  = conn.getresponse()
-        data = res.read().decode('utf-8')
+    # RETRY MANTIĞI:
+    # Geçici hatalar (timeout, 5xx, bağlantı kopması) → 3 deneme, exponential backoff
+    # Kalıcı hatalar (4xx — 429 hariç) → direkt raise, retry yok
+    # 429 → Retry-After kadar bekle, tekrar dene
+    import time as _time
 
-        # 429 Rate limit → Retry-After header'a göre bekle, tekrar dene
-        if res.status == 429:
-            retry_after = int(res.getheader('Retry-After', '60'))
-            retry_after = min(retry_after, 120)  # Max 2 dakika bekle
-            if attempt < MAX_RETRIES - 1:
-                print(f"Rate limit (429) → {retry_after}sn bekleniyor (deneme {attempt+1}/{MAX_RETRIES})")
-                _time.sleep(retry_after)
+    RETRYABLE_STATUS = {500, 502, 503, 504}
+    MAX_RETRIES      = 3
+
+    for attempt in range(MAX_RETRIES):
+        conn = None
+        try:
+            ctx  = _ssl.create_default_context()
+            conn = http.client.HTTPSConnection(host, timeout=30, context=ctx)
+            conn.request(method, endpoint, payload_str.encode('utf-8'), headers)
+            res  = conn.getresponse()
+            data = res.read().decode('utf-8')
+
+            # 429 Rate limit → Retry-After kadar bekle, tekrar dene
+            if res.status == 429:
+                retry_after = int(res.getheader('Retry-After', '60'))
+                retry_after = min(retry_after, 120)
+                if attempt < MAX_RETRIES - 1:
+                    print(f"Rate limit (429) → {retry_after}sn bekleniyor (deneme {attempt+1}/{MAX_RETRIES})")
+                    _time.sleep(retry_after)
+                    continue
+                raise Exception(f"Rate limit aşıldı (429). {retry_after}sn sonra tekrar deneyin.")
+
+            # 2xx → başarı
+            if 200 <= res.status < 300:
+                msg_id = None
+                try:
+                    import json as _j
+                    resp_json = _j.loads(data)
+                    msg_id = (resp_json.get('messageId') or resp_json.get('message_id') or
+                              resp_json.get('id') or resp_json.get('MessageId') or
+                              str(resp_json.get('data', {}).get('id', '')) or None)
+                    if msg_id:
+                        msg_id = str(msg_id)
+                except Exception:
+                    pass
+                print(f"API gönderim başarılı → {recipient} (HTTP {res.status}) id={msg_id}")
+                return True, msg_id or data
+
+            # 5xx geçici sunucu hatası → retry
+            if res.status in RETRYABLE_STATUS:
+                wait = 2 ** attempt  # exponential backoff: 1s, 2s, 4s
+                if attempt < MAX_RETRIES - 1:
+                    print(f"Geçici sunucu hatası ({res.status}) → {wait}sn sonra tekrar (deneme {attempt+1}/{MAX_RETRIES})")
+                    _time.sleep(wait)
+                    continue
+                raise Exception(f"Sunucu geçici hata ({res.status}), {MAX_RETRIES} denemede başarısız: {data[:200]}")
+
+            # 4xx kalıcı hata → retry yok
+            raise Exception(f"HTTP {res.status}: {data[:300]}")
+
+        except Exception as e:
+            err_str = str(e)
+            # Bağlantı/timeout hataları geçici → retry
+            is_network = any(kw in type(e).__name__ for kw in ('Timeout', 'Connection', 'Remote', 'BrokenPipe'))
+            is_network = is_network or any(kw in err_str for kw in (
+                'timed out', 'Connection refused', 'RemoteDisconnected', 'BrokenPipe', 'reset by peer'))
+            if is_network and attempt < MAX_RETRIES - 1:
+                wait = 2 ** attempt
+                print(f"Ağ hatası → {wait}sn sonra tekrar (deneme {attempt+1}/{MAX_RETRIES}): {err_str[:100]}")
+                _time.sleep(wait)
+                continue
+            raise  # Kalıcı hata veya son deneme → çağırana ilet
+        finally:
+            if conn:
                 try: conn.close()
                 except: pass
-                continue
-            raise Exception(f"Rate limit aşıldı (429). {retry_after}sn sonra tekrar deneyin.")
-
-        if 200 <= res.status < 300:
-            # Response'dan message_id çıkar (Brevo: messageId, Mailrelay: id, vb.)
-            msg_id = None
-            try:
-                import json as _j
-                resp_json = _j.loads(data)
-                msg_id = (resp_json.get('messageId') or resp_json.get('message_id') or
-                          resp_json.get('id') or resp_json.get('MessageId') or
-                          str(resp_json.get('data', {}).get('id', '')) or None)
-                if msg_id:
-                    msg_id = str(msg_id)
-            except Exception:
-                pass
-            print(f"API gönderim başarılı → {recipient} (HTTP {res.status}) id={msg_id}")
-            return True, msg_id or data
-        else:
-            raise Exception(f"HTTP {res.status}: {data[:300]}")  # Yanıtı kısalt (büyük HTML hata sayfası olabilir)
-     except Exception:
-        raise  # Çağırana ilet — app.py loglar
-     finally:
-        if conn:
-            try: conn.close()
-            except: pass
-     break  # Başarılı, döngüden çık
 
 
 def test_api_sender(sender_row):
@@ -712,3 +812,206 @@ def test_api_sender(sender_row):
     except Exception as e:
         return False, f"Bağlantı hatası: {e}"
 
+
+
+# ── E-posta Filtre Yardımcıları (worker.py'den de import edilir) ──────────
+_ROLE_PREFIXES = {
+    'info', 'admin', 'administrator', 'support', 'help', 'helpdesk',
+    'noreply', 'no-reply', 'donotreply', 'do-not-reply',
+    'contact', 'sales', 'marketing', 'billing', 'accounts',
+    'postmaster', 'webmaster', 'hostmaster', 'abuse',
+    'newsletter', 'mail', 'email', 'office', 'reception',
+    'hello', 'team', 'hr', 'jobs', 'careers', 'press', 'media',
+    'privacy', 'legal', 'security', 'it', 'tech', 'ops', 'devops',
+    'feedback', 'inquiry', 'enquiry', 'orders', 'returns', 'service',
+    'services', 'general', 'connect', 'partnerships', 'partner',
+}
+
+# Geçici/disposable e-posta domain'leri — bu domainler gerçek kullanıcı değil
+_DISPOSABLE_DOMAINS = {
+    'mailinator.com', 'guerrillamail.com', 'guerrillamail.net', 'guerrillamail.org',
+    'tempmail.com', 'temp-mail.org', 'throwaway.email', 'sharklasers.com',
+    'guerrillamailblock.com', 'grr.la', 'guerrillamail.info', 'spam4.me',
+    'trashmail.com', 'trashmail.me', 'trashmail.net', 'trashmail.at',
+    'trashmail.io', 'trashmail.xyz', 'dispostable.com', 'yopmail.com',
+    'yopmail.fr', 'cool.fr.nf', 'jetable.fr.nf', 'nospam.ze.tc',
+    'nomail.xl.cx', 'mega.zik.dj', 'speed.1s.fr', 'courriel.fr.nf',
+    'moncourrier.fr.nf', 'monemail.fr.nf', 'monmail.fr.nf',
+    'spamgourmet.com', 'spamgourmet.net', 'spamgourmet.org',
+    'spamex.com', 'spamfree24.org', 'spamhole.com', 'spamify.com',
+    'spaml.de', 'spammotel.com', 'spamobox.com', 'spamspot.com',
+    'spamthis.co.uk', 'spamtroll.net', 'tempr.email', 'discard.email',
+    'fakeinbox.com', 'mailnull.com', 'maildrop.cc', 'mailnesia.com',
+    'mailnull.com', 'spamgob.com', 'binkmail.com', 'bob.email',
+    'drdrb.com', 'emkei.cz', 'gowikimail.com', 'haltospam.com',
+    'inoutmail.de', 'inoutmail.eu', 'inoutmail.info', 'inoutmail.net',
+    'jetable.com', 'jetable.net', 'jetable.org', 'kasmail.com',
+    'klassmaster.com', 'klassmaster.net', 'lhsdv.com', 'loadaveragezero.com',
+    'mailblocks.com', 'mailcatch.com', 'maileater.com', 'mailexpire.com',
+    'mailfreeonline.com', 'mailguard.me', 'mailin8r.com', 'mailinater.com',
+    'mailincubator.com', 'mailme.lv', 'mailme24.com', 'mailmetrash.com',
+    'mailmoat.com', 'mailnew.com', 'mailnull.com', 'mailsiphon.com',
+    'mailslite.com', 'mailtemp.info', 'mailtome.de', 'mailtothis.com',
+    'mailtrash.net', 'mailzilla.org', 'mbx.cc', 'meltmail.com',
+    'mierdamail.com', 'mintemail.com', 'misterpinball.de', 'mt2009.com',
+    'mx0.wwwnew.eu', 'mycleaninbox.net', 'myphantomemail.com', 'myscrapthat.com',
+    'netmails.com', 'netmails.net', 'neverbox.com', 'nice-4u.com',
+    'nincsmail.hu', 'nobulk.com', 'noclickemail.com', 'nogmailspam.info',
+    'nomail.pw', 'nomail.xl.cx', 'nomail2me.com', 'nomorespamemails.com',
+    'nonspam.eu', 'nonspammer.de', 'noref.in', 'nospam.ze.tc',
+    'nospamfor.us', 'nospammail.net', 'nospamthanks.info', 'notmailinator.com',
+    'nowmymail.com', 'objectmail.com', 'obobbo.com', 'odnorazovoe.ru',
+    'oneoffemail.com', 'onewaymail.com', 'online.ms', 'oopi.org',
+    'opentrash.com', 'ordinaryamerican.net', 'owlpic.com', 'pancakemail.com',
+    'pookmail.com', 'privacy.net', 'proxymail.eu', 'prtnx.com',
+    'punkass.com', 'putthisinyourspamdatabase.com', 'qq.com',
+    'quickinbox.com', 'rcpt.at', 'recode.me', 'recursor.net',
+    'regbypass.com', 'regbypass.comsafe-mail.net', 'rejectmail.com',
+    'rklips.com', 'rmqkr.net', 'royal.net', 'rppkn.com',
+    'rtrtr.com', 's0ny.net', 'safe-mail.net', 'safetymail.info',
+    'safetypost.de', 'sandelf.de', 'saynotospams.com', 'selfdestructingmail.com',
+    'sendspamhere.com', 'sharklasers.com', 'shieldedmail.com', 'shiftmail.com',
+    'shit2.me', 'shitmail.me', 'shitmail.org', 'shitware.nl',
+    'shmeriously.com', 'shortmail.net', 'sibmail.com', 'skeefmail.com',
+    'slapsfromlastnight.com', 'slaskpost.se', 'slopsbox.com', 'smellfear.com',
+    'smwg.info', 'snakemail.com', 'sneakemail.com', 'sneakmail.de',
+    'snkmail.com', 'sofimail.com', 'sogetthis.com', 'soodonims.com',
+    'spam.la', 'spam.su', 'spamavert.com', 'spambob.com',
+    'spambob.net', 'spambob.org', 'spambog.com', 'spambog.de',
+    'spambog.ru', 'spambox.info', 'spambox.irishspringrealty.com',
+    'spambox.us', 'spamcannon.com', 'spamcannon.net', 'spamcero.com',
+    'spamcon.org', 'spamcorptastic.com', 'spamcowboy.com', 'spamcowboy.net',
+    'spamcowboy.org', 'spamday.com', 'spamex.com', 'spamfree.eu',
+    'spamfree24.de', 'spamfree24.eu', 'spamfree24.info', 'spamfree24.net',
+    'tempinbox.com', 'tempinbox.co.uk', 'tempomail.fr', 'temporaryemail.net',
+    'temporaryforwarding.com', 'temporaryinbox.com', 'temporarymail.org',
+    'tempthe.net', 'thankyou2010.com', 'thecloudindex.com',
+    'throam.com', 'throwam.com', 'throwmail.me', 'tilien.com',
+    'tmail.com', 'tmailinator.com', 'toiea.com', 'trashdevil.com',
+    'trashdevil.de', 'trashemail.de', 'trashmail.org', 'trashmailer.com',
+    'trashtimail.com', 'trillianpro.com', 'twinmail.de', 'tyldd.com',
+    'uggsrock.com', 'uroid.com', 'us.af', 'venompen.com',
+    'veryrealemail.com', 'viditag.com', 'viewcastmedia.com', 'viewcastmedia.net',
+    'viewcastmedia.org', 'walkmail.net', 'walkmail.ru', 'webemail.me',
+    'webm4il.info', 'wegwerfmail.de', 'wegwerfmail.net', 'wegwerfmail.org',
+    'whatiaas.com', 'whatifnot.com', 'whopy.com', 'wilemail.com',
+    'wmail.cf', 'writeme.us', 'wronghead.com', 'wuzupmail.net',
+    'xagloo.com', 'xemaps.com', 'xents.com', 'xmaily.com',
+    'xoxy.net', 'xyzfree.net', 'yapped.net', 'yeah.net',
+    'yepmail.net', 'yogamaven.com', 'yopmail.com', 'yopmail.fr',
+    'youmail.ga', 'yourdomain.com', 'ypmail.webarnak.fr.eu.org',
+    'yuurok.com', 'z1p.biz', 'za.com', 'zebins.com',
+    'zebins.eu', 'zehnminuten.de', 'zippymail.info', 'zoemail.net',
+    'zoemail.org', 'zomg.info', 'zxcv.com', 'zxcvbnm.com',
+}
+
+# Catch-all domain tespiti için SMTP probe cache
+# {domain: (is_catchall: bool, timestamp: float)}
+_catchall_cache: dict = {}
+_catchall_lock = __import__('threading').Lock()
+_MAX_CATCHALL_CACHE = 10_000
+
+def is_catchall_domain(domain: str, timeout: float = 3.0) -> bool:
+    """
+    Domain'in catch-all olup olmadığını tespit eder.
+
+    Yöntem: Var olamayacak kadar rastgele bir adrese SMTP probe atar.
+    Sunucu "250 OK" derse → catch-all (her adresi kabul ediyor).
+    Sunucu "550 No such user" derse → catch-all değil.
+
+    Cache: 10.000 domain'e kadar bellekte tutulur.
+    Hata durumunda False döner (gönderimine izin ver, false negative tercih).
+
+    UYARI: Bazı sunucular probe'u engeller veya greylisting yapar.
+    Bu durumda False dönülür — gönderim kesilmez.
+    """
+    import socket, time as _time
+    domain = domain.strip().lower()
+
+    with _catchall_lock:
+        cached = _catchall_cache.get(domain)
+        if cached is not None:
+            is_ca, ts = cached
+            # 24 saat cache geçerliliği
+            if _time.time() - ts < 86400:
+                return is_ca
+        if len(_catchall_cache) >= _MAX_CATCHALL_CACHE:
+            _catchall_cache.clear()
+
+    # Var olamayacak rastgele adres üret
+    import random, string
+    rand_local = ''.join(random.choices(string.ascii_lowercase + string.digits, k=20))
+    probe_addr = f"{rand_local}@{domain}"
+
+    is_catchall = False
+    try:
+        # MX'i bul
+        try:
+            import dns.resolver
+            mx_records = dns.resolver.resolve(domain, 'MX', lifetime=timeout)
+            mx_host = str(sorted(mx_records, key=lambda r: r.preference)[0].exchange).rstrip('.')
+        except Exception:
+            # DNS yoksa veya hata varsa catch-all değil say
+            with _catchall_lock:
+                _catchall_cache[domain] = (False, _time.time())
+            return False
+
+        # SMTP bağlantısı
+        sock = socket.create_connection((mx_host, 25), timeout=timeout)
+        sock.settimeout(timeout)
+        f = sock.makefile('rb')
+
+        def recv():
+            lines = []
+            while True:
+                line = f.readline(512).decode('utf-8', errors='replace').strip()
+                lines.append(line)
+                if len(line) >= 4 and line[3] == ' ':
+                    break
+            return lines[-1][:3], '\n'.join(lines)
+
+        recv()  # 220 banner
+        sock.sendall(b'EHLO mailcheck.local\r\n')
+        recv()
+        sock.sendall(b'MAIL FROM:<check@mailcheck.local>\r\n')
+        recv()
+        sock.sendall(f'RCPT TO:<{probe_addr}>\r\n'.encode())
+        code, _ = recv()
+        sock.sendall(b'QUIT\r\n')
+        sock.close()
+
+        # 250 veya 251 → sunucu adresi kabul etti → catch-all
+        is_catchall = code.startswith('2')
+
+    except Exception:
+        is_catchall = False  # Bağlanamazsa catch-all değil say
+
+    with _catchall_lock:
+        _catchall_cache[domain] = (is_catchall, _time.time())
+
+    return is_catchall
+
+
+# check_mx — yukarıda tanımlıdır
+
+
+def is_role_based(email: str) -> bool:
+    """
+    Rol bazlı e-posta adresi mi kontrol eder.
+    info@, admin@, noreply@ gibi adresler cold email için düşük değerli.
+    """
+    if '@' not in email:
+        return False
+    local = email.split('@')[0].lower().strip()
+    return local in _ROLE_PREFIXES
+
+
+def is_disposable(email: str) -> bool:
+    """
+    Geçici/disposable e-posta domain'i mi kontrol eder.
+    mailinator, tempmail, yopmail gibi domainler gerçek kullanıcı değil.
+    """
+    if '@' not in email:
+        return False
+    domain = email.rsplit('@', 1)[1].lower().strip()
+    return domain in _DISPOSABLE_DOMAINS

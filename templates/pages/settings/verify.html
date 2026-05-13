@@ -54,19 +54,22 @@
 
     <!-- Kural açıklaması -->
     <div class="ib" style="margin-top:16px;display:flex;flex-direction:column;gap:6px;align-items:flex-start">
-        <div>⚠ Doğrulama tamamlandığında tabloya <code>is_valid</code> kolonu eklenir:</div>
+        <div>⚠ Doğrulama tamamlandığında tabloya <code>is_valid</code>, <code>risk_score</code> ve <code>risk_label</code> kolonları eklenir:</div>
         <div style="font-size:11px;display:grid;grid-template-columns:auto 1fr;gap:4px 12px;align-items:center">
             <code style="color:var(--ok)">1 — Geçerli</code>
             <span style="color:var(--muted)">valid · typo_fixed · catch_all · no_infra · free_provider</span>
             <code style="color:var(--err)">0 — Geçersiz</code>
-            <span style="color:var(--muted)">invalid_format · disposable · no_mx · invalid (SMTP 550) → Suppression'a eklenir</span>
+            <span style="color:var(--muted)">invalid_format · disposable · no_mx · invalid (SMTP 550) · spam_trap → Suppression'a eklenir</span>
             <code style="color:var(--warn)">-1 — Riskli</code>
-            <span style="color:var(--muted)">unknown (SMTP belirsiz) · role_account (info@, admin@)</span>
+            <span style="color:var(--muted)">unknown (SMTP belirsiz) · role_account (info@, admin@) · no_infra</span>
             <code style="color:var(--muted)">NULL</code>
             <span style="color:var(--muted)">Henüz kontrol edilmedi</span>
         </div>
-        <div style="font-size:11px;color:var(--muted);margin-top:2px">
-            🔍 <strong>MX modu:</strong> format+disposable+role+typo+MX+SPF/DMARC kontrolü yapar, SMTP bağlantısı kurmaz.<br>
+        <div style="font-size:11px;color:var(--muted);margin-top:4px">
+            🪤 <strong>spam_trap:</strong> pristine/typo/recycled/honeypot/mx tuzakları — kesin geçersiz, is_valid=0, risk_score=0.<br>
+            🏗 <strong>no_infra:</strong> SPF ve DMARC kaydı yok — alan adı zayıf, is_valid=-1.<br>
+            📊 <strong>risk_score</strong> (0-100): SPF/DMARC, domain yaşı, bounce geçmişi, catch-all vb. faktörlere göre hesaplanır.<br>
+            🔍 <strong>MX modu:</strong> format+disposable+rol+typo+MX+SPF/DMARC+domain yaşı+spam trap kontrolü yapar, SMTP bağlantısı kurmaz.<br>
             🔬 <strong>SMTP modu:</strong> ek olarak catch-all tespiti ve gerçek RCPT doğrulaması yapar (yavaş, ~3-10sn/adres).
         </div>
     </div>
@@ -98,6 +101,31 @@
         <span style="color:var(--warn)">⚠ Riskli: <strong id="vt-unknown">0</strong></span>
         <span style="color:var(--info)">🚫 Suppression: <strong id="vt-supp">0</strong></span>
     </div>
+    <!-- Detaylı durum dağılımı — v2.1 yeni status kodları -->
+    <div id="v-status-breakdown" style="display:none;margin-top:10px;padding:10px 12px;background:var(--s2);border-radius:8px;font-size:12px">
+        <div style="font-weight:500;margin-bottom:8px;color:var(--muted)">Durum Dağılımı</div>
+        <div style="display:flex;flex-wrap:wrap;gap:8px">
+            <span title="SMTP veya MX doğrulandı">✅ valid: <strong id="vt-st-valid">0</strong></span>
+            <span title="Yazım hatası düzeltildi" style="color:var(--warn)">✏ typo_fixed: <strong id="vt-st-typo">0</strong></span>
+            <span title="Catch-all sunucu" style="color:var(--warn)">🔄 catch_all: <strong id="vt-st-catchall">0</strong></span>
+            <span title="Gmail/Hotmail vb." style="color:var(--info)">📧 free_provider: <strong id="vt-st-free">0</strong></span>
+            <span title="SPF/DMARC altyapısı zayıf" style="color:var(--warn)">🏗 no_infra: <strong id="vt-st-noinfra">0</strong></span>
+            <span title="Spam tuzağı tespit edildi" style="color:var(--err)">🪤 spam_trap: <strong id="vt-st-spamtrap">0</strong></span>
+            <span title="info@, admin@ gibi rol adresi" style="color:var(--muted)">👤 role_account: <strong id="vt-st-role">0</strong></span>
+            <span title="Geçici e-posta servisi" style="color:var(--err)">🗑 disposable: <strong id="vt-st-disposable">0</strong></span>
+            <span title="MX kaydı bulunamadı" style="color:var(--err)">❌ no_mx: <strong id="vt-st-nomx">0</strong></span>
+            <span title="SMTP 550 posta kutusu yok" style="color:var(--err)">🚫 invalid: <strong id="vt-st-invalid">0</strong></span>
+            <span title="SMTP belirsiz yanıt (greylisting)" style="color:var(--muted)">❓ unknown: <strong id="vt-st-unknown">0</strong></span>
+            <span title="Park/satılık/boş web sitesi" style="color:var(--err)">🅿 parked_domain: <strong id="vt-st-parked">0</strong></span>
+        </div>
+    </div>
+    <!-- did_you_mean uyarısı — iş tamamlandıktan sonra gösterilir -->
+    <div id="v-dym-box" style="display:none;margin-top:10px;padding:10px 14px;
+         background:rgba(255,200,0,0.08);border:1px solid var(--warn);border-radius:8px;font-size:12px">
+        <strong>✏ Yazım hatası önerileri bulundu.</strong>
+        Sonuç tablosundan <em>typo_fixed</em> filtresiyle görebilir, düzeltilmiş
+        adresleri ayrı tabloya aktarabilirsiniz.
+    </div>
 
     <div class="prog-bg">
         <div class="prog-fill" id="v-prog-fill"></div>
@@ -105,6 +133,37 @@
     <div style="font-size:11px;color:var(--muted);margin-bottom:10px" id="v-prog-text">Başlatılıyor…</div>
 
     <div class="logbox" id="v-logbox"></div>
+</div>
+
+<!-- ── Disposable Domain Listesi (v3 — 72K+ domain) ───────────────────── -->
+<div class="card">
+    <div class="card-title">🗑 Disposable Domain Listesi
+        <span class="badge" style="margin-left:8px;font-size:10px">72.000+ domain</span>
+    </div>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:14px">
+        Geçici e-posta servislerinin (tempmail, mailinator vb.) domain listesi.
+        Doğrulama sırasında bu listedeki domainler <code>disposable</code> olarak işaretlenir.
+        Liste <strong>disposable_updater.py</strong> tarafından periyodik olarak güncellenir;
+        manuel tetikleme için aşağıdaki butonu kullanabilirsiniz.
+    </div>
+    <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap">
+        <div style="font-size:12px">
+            Son güncelleme: <strong id="disp-last-update" style="color:var(--muted)">Yükleniyor…</strong>
+        </div>
+        <div style="font-size:12px">
+            Aktif domain sayısı: <strong id="disp-count" style="color:var(--info)">—</strong>
+        </div>
+        <div style="font-size:12px">
+            Kaynak: <strong id="disp-source" style="color:var(--muted)">—</strong>
+        </div>
+    </div>
+    <div class="btn-row" style="margin-top:14px">
+        <button class="btn btn-outline" onclick="triggerDisposableUpdate()">
+            <div class="sp" id="disp-sp" style="display:none"></div>
+            <span id="disp-btn-txt">🔄 Listeyi Şimdi Güncelle</span>
+        </button>
+    </div>
+    <div class="alert" id="disp-alert"></div>
 </div>
 
 <!-- ── SMTP Muaf Domainler ──────────────────────────────────────────── -->
@@ -151,6 +210,8 @@
                     <th>İş Adı</th><th>Tablo</th><th>Mod</th>
                     <th>Toplam</th><th>✓ Geçerli</th><th>✗ Geçersiz</th>
                     <th>⚠ Riskli</th><th>🚫 Supp.</th>
+                    <th title="spam_trap statüsündeki adres sayısı">🪤 Spam Tuzağı</th>
+                    <th title="Ortalama risk skoru (0-100)">📊 Ort. Skor</th>
                     <th>Kullanıcı</th><th>Durum</th><th>Tarih</th><th></th>
                 </tr>
             </thead>
@@ -161,6 +222,62 @@
     </div>
 </div>
 
+
+<!-- ── Doğrulanmış Tabloları Birleştir ───────────────────────── -->
+<div class="card" id="merge-card">
+    <div class="card-title">🔀 Tabloları Birleştir</div>
+    <p style="font-size:13px;color:var(--muted);margin-bottom:16px">
+        <code>mail_list_</code> prefix'li tablolarınızı seçip geçerli ve riskli adresleri
+        ayrı tablolarda birleştirir. Tekrar eden adresler otomatik atlanır.
+    </p>
+
+    <!-- Prefix filtre -->
+    <div class="field" style="margin-bottom:14px">
+        <label for="merge-prefix">Tablo Prefix Filtresi</label>
+        <div style="display:flex;gap:8px;align-items:center">
+            <input id="merge-prefix" value="" placeholder="mail_list_  (boş = tümü)" style="max-width:220px">
+            <button class="btn btn-outline btn-sm" onclick="loadVerifiedTables()">🔍 Listele</button>
+        </div>
+    </div>
+
+    <!-- Kaynak tablo listesi -->
+    <div style="margin-bottom:16px">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+            <strong style="font-size:13px">Kaynak Tablolar</strong>
+            <button class="btn btn-outline btn-sm" onclick="toggleSelectAll()">☑ Tümünü Seç/Kaldır</button>
+            <span id="merge-sel-count" style="font-size:11px;color:var(--muted)"></span>
+        </div>
+        <div id="merge-table-list" style="display:grid;gap:5px;max-height:300px;overflow-y:auto;padding:2px">
+            <div style="color:var(--muted);font-size:13px;padding:12px">Listele butonuna tıklayın.</div>
+        </div>
+    </div>
+
+    <!-- Hedef tablolar -->
+    <div class="g2" style="margin-bottom:14px">
+        <div class="field">
+            <label for="merge-target-valid">✓ Geçerli Adresler → Hedef Tablo</label>
+            <input id="merge-target-valid" placeholder="gecerli_liste">
+            <div style="font-size:11px;color:var(--muted);margin-top:4px">is_valid = 1 olanlar buraya yazılır.</div>
+        </div>
+        <div class="field">
+            <label for="merge-target-risky">⚠ Riskli Adresler → Hedef Tablo <span style="color:var(--muted)">(opsiyonel)</span></label>
+            <input id="merge-target-risky" placeholder="riskli_liste">
+            <div style="font-size:11px;color:var(--muted);margin-top:4px">is_valid = -1 olanlar buraya. Boş = riskli atlanır.</div>
+        </div>
+    </div>
+
+    <div class="btn-row">
+        <button class="btn btn-primary" onclick="doMerge()">
+            <span class="sp" id="merge-sp" style="display:none"></span>
+            <span id="merge-btn-txt">🔀 Seçilileri Birleştir</span>
+        </button>
+        <button class="btn btn-danger" onclick="doDropSelected()" style="margin-left:8px">
+            <span class="sp" id="drop-sp" style="display:none"></span>
+            <span id="drop-btn-txt">🗑 Seçilileri Sil</span>
+        </button>
+    </div>
+    <div class="alert" id="merge-alert"></div>
+</div>
 
 <!-- ── Temiz Tablo Modal ──────────────────────────────────────── -->
 <div id="export-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);
@@ -211,6 +328,7 @@ document.addEventListener('DOMContentLoaded', () => {
     loadTables();
     loadJobs();
     loadSkipDomains();
+    loadDisposableStatus();
     document.getElementById('v-mode').addEventListener('change', updateModeHint);
     // Çalışan iş varsa job listesini 10sn'de bir otomatik güncelle
     // Sekme gizli olduğunda gereksiz istek atmaz (visibilityState kontrolü)
@@ -344,6 +462,23 @@ async function pollJob(jobId) {
         document.getElementById('vt-unknown').textContent = j.unknown_count;
         document.getElementById('vt-supp').textContent    = j.suppressed_count;
 
+        // Detaylı durum dağılımı (v2.1) — API bu alanları döndürüyorsa göster
+        const breakdown = j.status_breakdown || {};
+        if (Object.keys(breakdown).length > 0) {
+            document.getElementById('v-status-breakdown').style.display = '';
+            const fields = {
+                valid:'vt-st-valid', typo_fixed:'vt-st-typo', catch_all:'vt-st-catchall',
+                free_provider:'vt-st-free', no_infra:'vt-st-noinfra', spam_trap:'vt-st-spamtrap',
+                role_account:'vt-st-role', disposable:'vt-st-disposable',
+                no_mx:'vt-st-nomx', invalid:'vt-st-invalid', unknown:'vt-st-unknown',
+                parked_domain:'vt-st-parked',
+            };
+            for (const [k, elId] of Object.entries(fields)) {
+                const el = document.getElementById(elId);
+                if (el) el.textContent = breakdown[k] || 0;
+            }
+        }
+
         const pct = j.total_count > 0
             ? Math.round(j.processed_count / j.total_count * 100) : 0;
         document.getElementById('v-prog-fill').style.width = pct + '%';
@@ -366,6 +501,20 @@ async function pollJob(jobId) {
             logVerify(`✓ ${j.valid_count} geçerli (%${validPct}) · ✗ ${j.invalid_count} geçersiz · ⚠ ${j.unknown_count} riskli`, 'ok');
             if (j.suppressed_count > 0)
                 logVerify(`🚫 ${j.suppressed_count} adres Suppression listesine eklendi`, 'err');
+            // Spam tuzağı varsa uyar
+            if ((breakdown.spam_trap || 0) > 0)
+                logVerify(`🪤 ${breakdown.spam_trap} spam tuzağı adresi tespit edildi — Suppression'a eklendi`, 'err');
+            // did_you_mean / typo_fixed varsa uyar
+            if ((breakdown.typo_fixed || 0) > 0) {
+                logVerify(`✏ ${breakdown.typo_fixed} adreste yazım hatası düzeltildi`, 'skip');
+                document.getElementById('v-dym-box').style.display = '';
+            }
+            // no_infra uyarısı
+            if ((breakdown.no_infra || 0) > 0)
+                logVerify(`🏗 ${breakdown.no_infra} adresin domain'inde SPF/DMARC altyapısı zayıf`, 'skip');
+            // parked domain uyarısı
+            if ((breakdown.parked_domain || 0) > 0)
+                logVerify(`🅿 ${breakdown.parked_domain} adresin domain'i park/satılık/boş web sitesi`, 'err');
             loadJobs();
             vActiveJobId = null;
         } else if (j.status === 'cancelled') {
@@ -419,13 +568,20 @@ async function loadJobs() {
             const cancelBtn = (j.status === 'pending' || j.status === 'running')
                 ? `<button class="btn btn-danger btn-sm" style="margin-left:6px"
                        onclick="quickCancel(${j.id})">⏹</button>` : '';
-            // Tamamlanmış işler için temiz tablo üret butonu
+            // Tamamlanmış işler için temiz tablo üret ve CSV indir butonları
             const exportBtn = j.status === 'done' && j.valid_count > 0
-                ? `<button class="btn btn-outline btn-sm" style="font-size:11px;padding:3px 8px;white-space:nowrap"
-                       onclick="openExportModal('${esc(j.table_name)}', ${j.valid_count}, ${j.unknown_count})"
-                       title="Geçerli adreslerden yeni tablo oluştur">
-                       📤 Temiz Tablo
-                   </button>` : '';
+                ? `<div style="display:flex;gap:4px;flex-wrap:wrap">
+                       <button class="btn btn-outline btn-sm" style="font-size:11px;padding:3px 8px;white-space:nowrap"
+                           onclick="openExportModal('${esc(j.table_name)}', ${j.valid_count}, ${j.unknown_count})"
+                           title="Geçerli adreslerden yeni tablo oluştur">
+                           📤 Temiz Tablo
+                       </button>
+                       <button class="btn btn-outline btn-sm" style="font-size:11px;padding:3px 8px;white-space:nowrap"
+                           onclick="downloadVerifyCsv('${esc(j.table_name)}', 'valid')"
+                           title="Sadece geçerli adresleri CSV olarak indir">
+                           ⬇ CSV
+                       </button>
+                   </div>` : '';
 
             return `<tr>
                 <td style="font-size:12px;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(j.job_name)}">${esc(j.job_name)}</td>
@@ -436,6 +592,8 @@ async function loadJobs() {
                 <td style="font-size:12px;text-align:right;color:var(--err)">${j.invalid_count}</td>
                 <td style="font-size:12px;text-align:right;color:var(--warn)">${j.unknown_count}</td>
                 <td style="font-size:12px;text-align:right;color:var(--info)">${j.suppressed_count}</td>
+                <td style="font-size:12px;text-align:right;color:var(--err)" title="Spam tuzağı tespit edilen adres sayısı">${(j.status_breakdown||{}).spam_trap > 0 ? '🪤 ' + (j.status_breakdown.spam_trap) : '<span style="color:var(--muted)">—</span>'}</td>
+                <td style="font-size:12px;text-align:right" title="Ortalama risk skoru (0=tehlikeli, 100=güvenli)">${j.avg_risk_score != null ? _riskBadge(Math.round(j.avg_risk_score)) : '<span style="color:var(--muted)">—</span>'}</td>
                 <td style="font-size:11px;color:var(--muted)">${j.created_by?'👤 '+esc(j.created_by):'—'}</td>
                 <td>${bar}<span class="chip ${statusCls[j.status]||'chip-off'}">${statusLbl[j.status]||j.status}</span>${cancelBtn}</td>
                 <td style="font-size:11px;color:var(--muted);white-space:nowrap">${dt}</td>
@@ -472,6 +630,134 @@ async function loadJobs() {
 }
 
 // ── Temiz Tablo Export ────────────────────────────────────────────
+/* ── Tabloları Birleştir ──────────────────────────────────────── */
+let _verifiedTables = [];
+let _allSelected    = true;
+
+async function loadVerifiedTables() {
+    const list   = document.getElementById('merge-table-list');
+    const prefix = document.getElementById('merge-prefix').value.trim();
+    list.innerHTML = '<div style="color:var(--muted);font-size:13px;padding:12px">Yükleniyor...</div>';
+    document.getElementById('merge-sel-count').textContent = '';
+    try {
+        const params = prefix ? `?prefix=${encodeURIComponent(prefix)}` : '';
+        const d = await (await fetch('/api/verify/verified-tables' + params)).json();
+        if (!d.success) {
+            list.innerHTML = `<div style="color:var(--err);font-size:13px;padding:12px">Hata: ${esc(d.message||'Bilinmeyen hata')}</div>`;
+            return;
+        }
+        _verifiedTables = d.data || [];
+        if (!_verifiedTables.length) {
+            const hint = prefix ? `"${prefix}" prefix'iyle eşleşen tablo bulunamadı. Prefix'i değiştirin veya boş bırakın.` : 'Kullanıcı tablosu bulunamadı.';
+            list.innerHTML = `<div style="color:var(--muted);font-size:13px;padding:12px">${hint}</div>`;
+            return;
+        }
+        _allSelected = true;
+        renderMergeList();
+    } catch(e) {
+        list.innerHTML = '<div style="color:var(--err);font-size:13px;padding:12px">Yüklenemedi: ' + e.message + '</div>';
+    }
+}
+
+function renderMergeList() {
+    const list = document.getElementById('merge-table-list');
+    list.innerHTML = _verifiedTables.map(t => {
+        const validBadge = t.has_is_valid
+            ? `<span style="color:var(--ok)">✓ ${t.valid.toLocaleString()}</span>`
+            : '<span style="color:var(--muted);font-size:10px">doğrulanmamış</span>';
+        const riskyBadge = t.has_is_valid && t.risky > 0
+            ? `<span style="color:var(--warn);margin-left:6px">⚠ ${t.risky.toLocaleString()}</span>` : '';
+        return `<label style="display:flex;align-items:center;gap:10px;padding:8px 10px;
+                      background:var(--s2);border:1px solid var(--border);
+                      border-radius:8px;cursor:pointer;user-select:none"
+                      onchange="updateSelCount()">
+            <input type="checkbox" class="merge-src-chk" value="${esc(t.name)}" ${_allSelected ? 'checked' : ''}>
+            <span style="flex:1;min-width:0">
+                <strong style="font-size:12px">${esc(t.name)}</strong>
+                <span style="font-size:11px;color:var(--muted);margin-left:8px">${t.total.toLocaleString()} kayıt</span>
+            </span>
+            <span style="font-size:11px;white-space:nowrap">${validBadge}${riskyBadge}</span>
+        </label>`;
+    }).join('');
+    updateSelCount();
+}
+
+function updateSelCount() {
+    const total    = document.querySelectorAll('.merge-src-chk').length;
+    const selected = document.querySelectorAll('.merge-src-chk:checked').length;
+    document.getElementById('merge-sel-count').textContent = `${selected} / ${total} seçili`;
+}
+
+function toggleSelectAll() {
+    _allSelected = !_allSelected;
+    document.querySelectorAll('.merge-src-chk').forEach(cb => cb.checked = _allSelected);
+    updateSelCount();
+}
+
+async function doMerge() {
+    const targetValid = document.getElementById('merge-target-valid').value.trim();
+    const targetRisky = document.getElementById('merge-target-risky').value.trim() || null;
+    const checked     = [...document.querySelectorAll('.merge-src-chk:checked')].map(cb => cb.value);
+    const nameRe      = /^[a-zA-Z0-9_]+$/;
+
+    if (!targetValid) { showAlert('merge-alert', 'Geçerli adresler için hedef tablo adı zorunludur.', 'err'); return; }
+    if (!nameRe.test(targetValid)) { showAlert('merge-alert', 'Tablo adı sadece harf, rakam ve _ içerebilir.', 'err'); return; }
+    if (targetRisky && !nameRe.test(targetRisky)) { showAlert('merge-alert', 'Riskli tablo adı sadece harf, rakam ve _ içerebilir.', 'err'); return; }
+    if (targetRisky && targetRisky === targetValid) { showAlert('merge-alert', 'Geçerli ve riskli hedef tablo adları farklı olmalıdır.', 'err'); return; }
+    if (!checked.length) { showAlert('merge-alert', 'En az bir kaynak tablo seçin.', 'err'); return; }
+
+    const sp   = document.getElementById('merge-sp');
+    const btxt = document.getElementById('merge-btn-txt');
+    sp.style.display = 'inline-block'; btxt.textContent = 'Birleştiriliyor...';
+    hideAlert('merge-alert');
+
+    try {
+        const d = await (await fetch('/api/verify/merge', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ target_valid: targetValid, target_risky: targetRisky, source_tables: checked })
+        })).json();
+        showAlert('merge-alert', d.message, d.success ? 'ok' : 'err');
+        if (d.success) loadVerifiedTables();
+    } catch(e) {
+        showAlert('merge-alert', 'İstek hatası: ' + e.message, 'err');
+    } finally {
+        sp.style.display = 'none'; btxt.textContent = '🔀 Seçilileri Birleştir';
+    }
+}
+
+async function doDropSelected() {
+    const checked = [...document.querySelectorAll('.merge-src-chk:checked')].map(cb => cb.value);
+    if (!checked.length) { showAlert('merge-alert', 'Silinecek tablo seçilmedi.', 'err'); return; }
+
+    const msg = `Seçili ${checked.length} tablo kalıcı olarak silinecek:\n\n${checked.join('\n')}\n\nEmin misiniz?`;
+    if (!confirm(msg)) return;
+
+    const sp   = document.getElementById('drop-sp');
+    const btxt = document.getElementById('drop-btn-txt');
+    sp.style.display = 'inline-block'; btxt.textContent = 'Siliniyor...';
+    hideAlert('merge-alert');
+
+    try {
+        const d = await (await fetch('/api/verify/drop-tables', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ tables: checked })
+        })).json();
+        showAlert('merge-alert', d.message, d.success ? 'ok' : 'err');
+        if (d.success) loadVerifiedTables();
+    } catch(e) {
+        showAlert('merge-alert', 'İstek hatası: ' + e.message, 'err');
+    } finally {
+        sp.style.display = 'none'; btxt.textContent = '🗑 Seçilileri Sil';
+    }
+}
+
+function downloadVerifyCsv(tableName, filterMode) {
+    const params = new URLSearchParams({ table: tableName, filter: filterMode });
+    window.location.href = `/api/verify/export-csv?${params.toString()}`;
+}
+
 let _exportSourceTable = '';
 
 function openExportModal(tableName, validCount, riskyCount) {
@@ -616,6 +902,42 @@ function logVerify(msg, cls = 'info') {
 }
 
 
+// ── Disposable Domain Listesi (v3) ──────────────────────────────
+async function loadDisposableStatus() {
+    try {
+        const r = await fetch('/api/verify/disposable-status');
+        const d = await r.json();
+        if (!d.success) return;
+        document.getElementById('disp-last-update').textContent =
+            d.last_updated ? new Date(d.last_updated).toLocaleString('tr-TR') : 'Bilinmiyor';
+        document.getElementById('disp-count').textContent =
+            d.domain_count != null ? d.domain_count.toLocaleString('tr-TR') : '—';
+        document.getElementById('disp-source').textContent =
+            d.source || 'disposable-email-domains (v3)';
+    } catch(e) { console.warn('Disposable durum yüklenemedi:', e); }
+}
+
+async function triggerDisposableUpdate() {
+    const sp  = document.getElementById('disp-sp');
+    const txt = document.getElementById('disp-btn-txt');
+    const al  = document.getElementById('disp-alert');
+    sp.style.display = 'block'; txt.textContent = 'Güncelleniyor…'; al.className = 'alert';
+    try {
+        const r = await fetch('/api/verify/disposable-update', {method:'POST'});
+        const d = await r.json();
+        al.textContent = d.message || (d.success ? 'Güncelleme başlatıldı.' : 'Hata oluştu.');
+        al.className   = d.success ? 'alert ok show' : 'alert err show';
+        if (d.success) {
+            setTimeout(() => { loadDisposableStatus(); al.className = 'alert'; }, 3000);
+        }
+    } catch(e) {
+        al.textContent = 'Bağlantı hatası: ' + e.message;
+        al.className   = 'alert err show';
+    } finally {
+        sp.style.display = 'none'; txt.textContent = '🔄 Listeyi Şimdi Güncelle';
+    }
+}
+
 // ── SMTP Muaf Domainler ─────────────────────────────────────────
 let vSkipDomains = [];
 
@@ -695,6 +1017,17 @@ function esc(s) {
     return String(s??'')
         .replace(/&/g,'&amp;').replace(/</g,'&lt;')
         .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+/** Risk skoru için renkli badge (v2.1 risk_score modülü) */
+function _riskBadge(score) {
+    let color, label;
+    if      (score >= 90) { color = 'var(--ok)';   label = 'Güvenli'; }
+    else if (score >= 70) { color = '#4caf50';      label = 'Düşük'; }
+    else if (score >= 50) { color = 'var(--warn)';  label = 'Orta'; }
+    else if (score >= 30) { color = '#ff9800';      label = 'Yüksek'; }
+    else                  { color = 'var(--err)';   label = 'Tehlikeli'; }
+    return `<span style="color:${color};font-weight:500" title="${label} risk">${score}</span>`;
 }
 </script>
 

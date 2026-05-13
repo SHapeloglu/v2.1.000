@@ -6,6 +6,77 @@ Versiyonlama: [Semantic Versioning](https://semver.org/lang/tr/)
 
 ---
 
+## [2.2.0] — 2026-05-10
+
+### Eklendi
+
+- **`bounce_scanner_engine.py`** — Bounce tarama ve sınıflandırma motoru
+  - IMAP kutusuna bağlanarak MAILER-DAEMON / postmaster / Mail Delivery System maillerini tarar
+  - 5 kategori: `kalici` · `gecici` · `gonderici_sorunu` · `mail_loop` · `internal_domain`
+  - `_aciklama_from_body()`: Diagnostic-Code'dan Türkçe açıklama + ikon etiket üretir
+  - `MESAJ_PATTERNS`: 50+ pattern, öncelik sıralı, spam/DKIM/relay/kota ayrımı
+  - `GONDERICI_SORUNU_PATTERNS`: DKIM/SPF/relay/auth → alıcı geçerli, suppression'a eklenmiyor
+  - `GECICI_OVERRIDE_PATTERNS`: Rate limit/kota → geçici (Action:failed olsa bile)
+  - `ENHANCED_STATUS` tablosu + `_enhanced_status_etiket()`: RFC 3463 tabanlı ikinci etiket (deneme)
+  - 511 gerçek EML üzerinde test edildi — %100 parse, %99 etiket kapsama
+
+- **Bounce Scanner UI** (`bounce-scanner.html`) tamamen yenilendi
+  - Checkbox seçim sistemi — tarama biter, sonuçları incelersin, seçersin, uygularsın
+  - Hızlı seçim: `☑ Kalıcıları Seç` · `☑ Tümünü Seç` · `☐ Temizle`
+  - Alt çubuk: `🚫 Suppression'a Ekle` · `📋 Sadece Bounce Kaydı`
+  - Kategori filtre pill'leri, arama, CSV export
+  - `Kısa Açıklama` ve `RFC Etiket (deneme)` sütunları yan yana karşılaştırma için
+  - Otomatik Suppression anahtarı varsayılan **kapalı**
+
+- **`/api/bounce-scanner/manuel-ekle`** — Seçilen kaydı bounce + isteğe bağlı suppression'a ekler
+- **`/api/suppression/batch-check`** — CSV'den gelen adresleri suppression'da toplu sorgula
+- **`help_content.py`** — Bounce Scanner bölümü eklendi (8 S/C, kategori açıklamaları dahil)
+- **`GUVENLIK_KILAVUZU.md`** — Bounce Scanner güvenlik notları + güncel rate limit tablosu
+
+### Düzeltildi
+
+- **`templates/base.html`** — `{% extends "base.html" %}` döngüsü (RecursionError) giderildi
+- **`templates/pages/settings/base.html`** — Ayarlar alt navigasyonu düzeltildi
+- **`app.py`** `current_user.role` → `session.get('user_role')` (audit-log sayfası NameError)
+- **`bounce_scanner_engine.py`** — `_is_real_bounce()` çoklu Return-Path header sorununu çözdü
+- **`bounce_scanner_engine.py`** — `_temizle()` ardışık enhanced status code'ları temizliyor
+- **`bounce_scanner_engine.py`** — Spam filtresi raporundaki DKIM ifadesi yanlış `gonderici_sorunu` vermiyordu
+
+### Teknik Notlar
+
+- `parse_bounce()` dönüş dict'ine `etiket` ve `rfc_etiket` alanları eklendi
+- Pattern araması hem ham `diag_raw` hem temizlenmiş `diag_text` üzerinde yapılıyor
+- Tüm yeni endpoint'ler `@login_required` + `@rate_limit` ile korunuyor
+
+---
+
+## [2.1.1] — 2026-04-18
+
+### Eklendi
+- **`sns_handler.py` Blueprint entegrasyonu**: AWS SNS bounce/complaint webhook'u artık ayrı bir Flask Blueprint olarak çalışıyor
+  - Yeni endpoint: `POST /sns/ses-notification` (eski: `/api/ses/sns-webhook` devre dışı)
+  - `SubscriptionConfirmation` isteği otomatik onaylanıyor (`urllib` ile, harici bağımlılık yok)
+  - Bounce/Complaint/Delivery tüm tiplerinde `ses_notification_save()` ile tam DB kaydı
+  - `_db()` factory pattern ile proje geri kalanıyla tutarlı DB erişimi
+  - `setup_sns_topic()` yardımcı fonksiyonu eklendi (CLI/admin kullanımı için)
+- **`disposable_updater.py` worker entegrasyonu**: 50.000+ geçici domain listesi artık otomatik güncelleniyor
+  - `worker.py`'de `_run_tasks()` sonuna entegre edildi
+  - Her worker çalışmasında kontrol edilir; `MIN_UPDATE_INTERVAL = 6 saat` koruması sayesinde gereksiz HTTP isteği yapılmaz
+  - Birincil kaynak başarısız olursa yedek kaynak devreye girer
+  - Güncelleme sonucu worker log'una yazılır
+
+### Değiştirildi
+- `app.py` başına `from sns_handler import sns_bp` ve `app.register_blueprint(sns_bp)` eklendi
+- `app.py` içindeki eski `ses_sns_webhook()` fonksiyonu devre dışı bırakıldı (yorum satırı)
+- `webhook_status` endpoint'i güncellendi: `ses_sns` URL'i artık `/sns/ses-notification` döndürüyor
+- `worker.py`'e `from disposable_updater import update_disposable_domains` import eklendi
+
+### Teknik Notlar
+- Flask port `5000` → `5002` olarak düzeltildi (nginx config, setup_linux.py, güvenlik kılavuzu)
+- `sns_handler.py` tamamen yeniden yazıldı: eski `log_send()` bağımlılığı kaldırıldı, `ses_notification_save()` eklendi
+
+---
+
 ## [2.1.0] — 2026-03-13
 
 ### Eklendi

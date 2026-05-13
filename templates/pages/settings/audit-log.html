@@ -1,0 +1,262 @@
+{% extends "pages/settings/base.html" %}
+{% block subtitle %}Sistem aktivite kaydı — kim, ne zaman, ne yaptı{% endblock %}
+
+{% block settings_content %}
+
+<!-- Filtreler -->
+<div class="card" style="padding:16px;margin-bottom:18px">
+    <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end">
+
+        <div style="display:flex;flex-direction:column;gap:4px">
+            <label style="font-size:11px;color:var(--muted);font-weight:500">Kullanıcı</label>
+            <input id="f-username" type="text" placeholder="Kullanıcı adı..." style="width:160px"
+                   oninput="debounceLoad()">
+        </div>
+
+        <div style="display:flex;flex-direction:column;gap:4px">
+            <label style="font-size:11px;color:var(--muted);font-weight:500">İşlem</label>
+            <select id="f-action" onchange="loadLog(1)" style="width:180px">
+                <option value="">— Tümü —</option>
+            </select>
+        </div>
+
+        <div style="display:flex;flex-direction:column;gap:4px">
+            <label style="font-size:11px;color:var(--muted);font-weight:500">Başlangıç</label>
+            <input id="f-from" type="date" onchange="loadLog(1)" style="width:148px">
+        </div>
+
+        <div style="display:flex;flex-direction:column;gap:4px">
+            <label style="font-size:11px;color:var(--muted);font-weight:500">Bitiş</label>
+            <input id="f-to" type="date" onchange="loadLog(1)" style="width:148px">
+        </div>
+
+        <button class="btn btn-secondary" onclick="clearFilters()" style="height:36px">Temizle</button>
+        <button class="btn btn-secondary" onclick="exportCsv()" style="height:36px">⬇ CSV</button>
+
+        <div style="margin-left:auto;display:flex;align-items:center;gap:8px">
+            <span id="total-label" style="font-size:12px;color:var(--muted)"></span>
+        </div>
+    </div>
+</div>
+
+<!-- Tablo -->
+<div class="card" style="padding:0;overflow:hidden">
+    <table style="width:100%;border-collapse:collapse;font-size:13px" id="audit-table">
+        <thead>
+            <tr style="background:var(--s1);border-bottom:1px solid var(--border)">
+                <th style="padding:10px 14px;text-align:left;font-weight:500;color:var(--muted);font-size:11px;white-space:nowrap">Tarih</th>
+                <th style="padding:10px 14px;text-align:left;font-weight:500;color:var(--muted);font-size:11px">Kullanıcı</th>
+                <th style="padding:10px 14px;text-align:left;font-weight:500;color:var(--muted);font-size:11px">İşlem</th>
+                <th style="padding:10px 14px;text-align:left;font-weight:500;color:var(--muted);font-size:11px">Hedef</th>
+                <th style="padding:10px 14px;text-align:left;font-weight:500;color:var(--muted);font-size:11px">Detay</th>
+                <th style="padding:10px 14px;text-align:left;font-weight:500;color:var(--muted);font-size:11px">IP</th>
+            </tr>
+        </thead>
+        <tbody id="audit-body">
+            <tr><td colspan="6" style="padding:40px;text-align:center;color:var(--muted)">Yükleniyor...</td></tr>
+        </tbody>
+    </table>
+</div>
+
+<!-- Sayfalama -->
+<div id="pagination" style="display:flex;justify-content:center;gap:6px;margin-top:16px;flex-wrap:wrap"></div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+/* ── Sabitler ──────────────────────────────────────────────────────── */
+const PER_PAGE = 50;
+let _debounceTimer = null;
+
+/* ── Action etiketleri ─────────────────────────────────────────────── */
+const ACTION_LABELS = {
+    sender_create:      { label: 'Gönderici eklendi',    color: '#4ade80' },
+    sender_update:      { label: 'Gönderici güncellendi',color: '#60a5fa' },
+    sender_delete:      { label: 'Gönderici silindi',    color: '#f87171' },
+    bulk_start:         { label: 'Toplu gönderim başladı',color: '#a78bfa' },
+    bulk_done:          { label: 'Toplu gönderim bitti', color: '#4ade80' },
+    excel_upload:       { label: 'Excel yüklendi',       color: '#60a5fa' },
+    user_create:        { label: 'Kullanıcı oluşturuldu',color: '#4ade80' },
+    user_update:        { label: 'Kullanıcı güncellendi',color: '#60a5fa' },
+    user_delete:        { label: 'Kullanıcı silindi',    color: '#f87171' },
+    suppression_add:    { label: 'Suppression eklendi',  color: '#fb923c' },
+    domain_block_add:   { label: 'Domain bloklandı',     color: '#fb923c' },
+    domain_block_remove:{ label: 'Domain blok kaldırıldı',color: '#60a5fa' },
+    verify_start:       { label: 'Doğrulama başladı',    color: '#a78bfa' },
+    verify_cancel:      { label: 'Doğrulama iptal',      color: '#f87171' },
+    verify_export:      { label: 'Doğrulama export',     color: '#60a5fa' },
+    verify_merge:       { label: 'Doğrulama birleştirme',color: '#60a5fa' },
+    drop_tables:        { label: 'Tablo silindi',        color: '#f87171' },
+    smtp_skip_update:   { label: 'SMTP muaf güncellendi',color: '#60a5fa' },
+    login:              { label: 'Giriş yapıldı',        color: '#4ade80' },
+    logout:             { label: 'Çıkış yapıldı',        color: '#94a3b8' },
+};
+
+function actionBadge(action) {
+    const a = ACTION_LABELS[action];
+    const color = a ? a.color : '#94a3b8';
+    const label = a ? a.label : action;
+    return `<span style="display:inline-block;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:500;
+                          background:${color}22;color:${color};border:1px solid ${color}44;white-space:nowrap">
+                ${esc(label)}
+            </span>`;
+}
+
+/* ── Yardımcılar ───────────────────────────────────────────────────── */
+function esc(s) {
+    return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function buildParams(page) {
+    const p = new URLSearchParams();
+    p.set('page', page);
+    p.set('per_page', PER_PAGE);
+    const u = document.getElementById('f-username').value.trim();
+    const a = document.getElementById('f-action').value;
+    const f = document.getElementById('f-from').value;
+    const t = document.getElementById('f-to').value;
+    if (u) p.set('username', u);
+    if (a) p.set('action', a);
+    if (f) p.set('date_from', f);
+    if (t) p.set('date_to', t);
+    return p;
+}
+
+function debounceLoad() {
+    clearTimeout(_debounceTimer);
+    _debounceTimer = setTimeout(() => loadLog(1), 350);
+}
+
+function clearFilters() {
+    document.getElementById('f-username').value = '';
+    document.getElementById('f-action').value   = '';
+    document.getElementById('f-from').value     = '';
+    document.getElementById('f-to').value       = '';
+    loadLog(1);
+}
+
+function exportCsv() {
+    const p = buildParams(1);
+    p.set('export', 'csv');
+    window.location.href = `/api/audit-log?${p.toString()}`;
+}
+
+/* ── Action dropdown yükle ─────────────────────────────────────────── */
+async function loadActions() {
+    try {
+        const r = await fetch('/api/audit-log/actions');
+        const d = await r.json();
+        if (!d.success) return;
+        const sel = document.getElementById('f-action');
+        d.data.forEach(action => {
+            const a   = ACTION_LABELS[action];
+            const opt = document.createElement('option');
+            opt.value       = action;
+            opt.textContent = a ? a.label : action;
+            sel.appendChild(opt);
+        });
+    } catch(e) { console.warn(e); }
+}
+
+/* ── Log tablosu yükle ─────────────────────────────────────────────── */
+async function loadLog(page) {
+    const tbody = document.getElementById('audit-body');
+    tbody.innerHTML = `<tr><td colspan="6" style="padding:32px;text-align:center;color:var(--muted)">Yükleniyor...</td></tr>`;
+
+    try {
+        const r = await fetch(`/api/audit-log?${buildParams(page)}`);
+        const d = await r.json();
+        if (!d.success) {
+            tbody.innerHTML = `<tr><td colspan="6" style="padding:32px;text-align:center;color:var(--err)">Hata: ${esc(d.message)}</td></tr>`;
+            return;
+        }
+
+        const rows  = d.data;
+        const total = d.total;
+
+        document.getElementById('total-label').textContent =
+            `${total.toLocaleString()} kayıt`;
+
+        if (!rows.length) {
+            tbody.innerHTML = `<tr><td colspan="6" style="padding:40px;text-align:center;color:var(--muted)">Kayıt bulunamadı.</td></tr>`;
+            renderPagination(0, page);
+            return;
+        }
+
+        tbody.innerHTML = rows.map((r, idx) => `
+            <tr style="border-bottom:1px solid var(--border);${idx % 2 === 0 ? '' : 'background:var(--s1)'}">
+                <td style="padding:9px 14px;white-space:nowrap;color:var(--muted);font-size:12px;font-family:'Space Mono',monospace">
+                    ${esc(r.created_at || '')}
+                </td>
+                <td style="padding:9px 14px;white-space:nowrap">
+                    <span style="font-weight:500">${esc(r.username || '—')}</span>
+                    ${r.user_id ? `<span style="font-size:10px;color:var(--muted)"> #${r.user_id}</span>` : ''}
+                </td>
+                <td style="padding:9px 14px">${actionBadge(r.action)}</td>
+                <td style="padding:9px 14px;font-size:12px;color:var(--muted)">
+                    ${r.target_type ? `<span style="color:var(--fg)">${esc(r.target_type)}</span>` : ''}
+                    ${r.target_id   ? `<span style="color:var(--muted)"> / ${esc(r.target_id)}</span>` : ''}
+                </td>
+                <td style="padding:9px 14px;font-size:12px;color:var(--muted);max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
+                    title="${esc(r.detail || '')}">
+                    ${esc(r.detail || '—')}
+                </td>
+                <td style="padding:9px 14px;font-size:11px;color:var(--muted);font-family:'Space Mono',monospace;white-space:nowrap">
+                    ${esc(r.ip_address || '—')}
+                </td>
+            </tr>
+        `).join('');
+
+        renderPagination(total, page);
+
+    } catch(e) {
+        tbody.innerHTML = `<tr><td colspan="6" style="padding:32px;text-align:center;color:var(--err)">Bağlantı hatası.</td></tr>`;
+        console.error(e);
+    }
+}
+
+/* ── Sayfalama ─────────────────────────────────────────────────────── */
+function renderPagination(total, currentPage) {
+    const container = document.getElementById('pagination');
+    const totalPages = Math.ceil(total / PER_PAGE);
+    if (totalPages <= 1) { container.innerHTML = ''; return; }
+
+    let html = '';
+
+    // Önceki
+    html += `<button class="btn btn-secondary" style="padding:5px 12px;font-size:12px"
+                onclick="loadLog(${currentPage - 1})"
+                ${currentPage <= 1 ? 'disabled' : ''}>‹ Önceki</button>`;
+
+    // Sayfa numaraları
+    const delta = 2;
+    for (let p = 1; p <= totalPages; p++) {
+        if (p === 1 || p === totalPages || (p >= currentPage - delta && p <= currentPage + delta)) {
+            const active = p === currentPage;
+            html += `<button onclick="loadLog(${p})"
+                        style="padding:5px 10px;font-size:12px;border-radius:6px;border:1px solid var(--border);
+                               background:${active ? 'var(--accent)' : 'var(--s1)'};
+                               color:${active ? '#fff' : 'var(--fg)'};cursor:pointer;min-width:32px">
+                        ${p}
+                     </button>`;
+        } else if (p === currentPage - delta - 1 || p === currentPage + delta + 1) {
+            html += `<span style="padding:5px 4px;color:var(--muted)">…</span>`;
+        }
+    }
+
+    // Sonraki
+    html += `<button class="btn btn-secondary" style="padding:5px 12px;font-size:12px"
+                onclick="loadLog(${currentPage + 1})"
+                ${currentPage >= totalPages ? 'disabled' : ''}>Sonraki ›</button>`;
+
+    container.innerHTML = html;
+}
+
+/* ── Sayfa yüklenince ──────────────────────────────────────────────── */
+document.addEventListener('DOMContentLoaded', () => {
+    loadActions();
+    loadLog(1);
+});
+</script>
+{% endblock %}

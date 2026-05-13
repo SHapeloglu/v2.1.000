@@ -8,13 +8,12 @@
  *   2. DB işlemleri           — loadDbConfig, genKey, testDb, saveDb
  *   3. Gönderici yönetimi     — loadSenders, editSenderFn, saveSender, testSender, delSender
  *   4. Kural yönetimi         — loadRules, editRuleFn, saveRule, delRule
- *   5. Tek gönderim           — sendSingle
- *   6. Toplu gönderim         — startBulk, startBulkFromDb, handleBulkEvent
- *   7. Excel işlemleri        — previewExcel, promptExcelImport, confirmImport
- *   8. Değişken etiketleri    — updateVarTags, insertVar
- *   9. Log görüntüleme        — loadLog
- *  10. EC2 yönetimi           — manualStopEc2
- *  11. Global atamalar        — window.* (inline onclick için)
+ *   5. Toplu gönderim         — startBulk, startBulkFromDb, handleBulkEvent
+ *   6. Excel işlemleri        — previewExcel, promptExcelImport, confirmImport
+ *   7. Değişken etiketleri    — updateVarTags, insertVar
+ *   8. Log görüntüleme        — loadLog
+ *   9. EC2 yönetimi           — manualStopEc2
+ *  10. Global atamalar        — window.* (inline onclick için)
  *
  * ÖNEMLİ KAVRAMLAR:
  *   - SSE (Server-Sent Events): sunucudan tek yönlü canlı veri akışı
@@ -41,7 +40,10 @@ function detectApiService(host) {
     if (h.includes('sendgrid'))  return {label: '✉ SendGrid',  short: 'SendGrid'};
     if (h.includes('postmark'))  return {label: '📬 Postmark',  short: 'Postmark'};
     if (h.includes('resend'))    return {label: '⚡ Resend',    short: 'Resend'};
-    if (h.includes('mailgun'))   return {label: '🔫 Mailgun',   short: 'Mailgun'};
+    if (h.includes('mailtrap'))  return {label: '🪤 Mailtrap',   short: 'Mailtrap'};
+    if (h.includes('mailjet'))   return {label: '✈ Mailjet',    short: 'Mailjet'};
+    if (h.includes('sendpulse')) return {label: '💚 SendPulse',  short: 'SendPulse'};
+    if (h.includes('mailgun'))   return {label: '🔫 Mailgun',    short: 'Mailgun'};
     if (h.includes('sparkpost')) return {label: '✨ SparkPost', short: 'SparkPost'};
     if (h.includes('amazon') || h.includes('amazonaws')) return {label: '☁ SES',     short: 'SES'};
     return {label: '🔌 ' + host.replace(/^api\./, '').split('.')[0], short: host.split('.')[0]};
@@ -316,24 +318,61 @@ async function loadSenderSelects() {
         const d = await (await fetch('/api/senders')).json();
         _sendersCache = {};
         if (d.data) d.data.forEach(s => _sendersCache[s.id] = s);
-        const modeLabel = s => {
+
+        // Her gönderici için servis etiketi — gruplama için sabit string
+        const svcLabel = s => {
             if (s.sender_mode === 'ses') return '☁ AWS SES';
-            if (s.sender_mode === 'api') return '🔌 ' + detectApiService(s.api_host).short;
-            return '📡 SMTP';
+            if (s.sender_mode === 'smtp') return '📡 SMTP';
+            // API modu: host'tan servis adını tespit et
+            return '🔌 ' + detectApiService(s.api_host).short;
         };
-        const opts = d.data ? d.data.filter(s => s.is_active).map(s => `<option value="${s.id}">${modeLabel(s)}  —  ${esc(s.name)}  —  ${esc(s.email)}</option>`).join('') : '';
-        
-        const cSender = document.getElementById('c-sender');
-        if (cSender) cSender.innerHTML = '<option value="">— Seç —</option>' + opts;
-        
+
+        const active = d.data ? d.data.filter(s => s.is_active) : [];
+
+        // Önce servis adına, sonra gönderici adına göre sırala
+        active.sort((a, b) => {
+            const sa = svcLabel(a), sb = svcLabel(b);
+            if (sa !== sb) return sa.localeCompare(sb, 'tr');
+            return (a.name || '').localeCompare(b.name || '', 'tr');
+        });
+
+        // Gruplu optgroup HTML
+        function buildGroupedOpts(placeholder) {
+            let html = `<option value="">${placeholder}</option>`;
+            let lastGrp = null;
+            for (const s of active) {
+                const grp = svcLabel(s);
+                if (grp !== lastGrp) {
+                    if (lastGrp !== null) html += '</optgroup>';
+                    html += `<optgroup label="${grp}">`;
+                    lastGrp = grp;
+                }
+                html += `<option value="${s.id}">${esc(s.name)}  —  ${esc(s.email)}</option>`;
+            }
+            if (lastGrp !== null) html += '</optgroup>';
+            return html;
+        }
+
+        // Düz liste — log filtresi için (servis prefix ile)
+        const flatOpts = active.map(s =>
+            `<option value="${s.id}">${svcLabel(s)}  —  ${esc(s.name)}  —  ${esc(s.email)}</option>`
+        ).join('');
+
         const bSender = document.getElementById('b-sender');
-        if (bSender) bSender.innerHTML = '<option value="">— Seç —</option>' + opts;
-        
+        if (bSender) bSender.innerHTML = buildGroupedOpts('— Seç —');
+
+        const cSender = document.getElementById('c-sender');
+        if (cSender) cSender.innerHTML = buildGroupedOpts('— Seç —');
+
         const lfSender = document.getElementById('lf-sender');
-        if (lfSender) lfSender.innerHTML = '<option value="">Tüm göndericiler</option>' + opts;
-        
+        if (lfSender) lfSender.innerHTML = '<option value="">Tüm göndericiler</option>' + flatOpts;
+
         const rSender = document.getElementById('r-sender');
-        if (rSender) rSender.innerHTML = '<option value="">— Seç —</option>' + (d.data ? d.data.map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join('') : '');
+        if (rSender) rSender.innerHTML = buildGroupedOpts('— Seç —');
+
+        // Sayfa yüklenince kaydedilmiş sender seçimini uygula
+        if (typeof applyPendingSender === 'function') applyPendingSender();
+
     } catch (e) { }
 }
 
@@ -516,6 +555,12 @@ async function loadRules() {
             const cur = bRule.value;
             bRule.innerHTML = '<option value="">— Kural yok (sınırsız) —</option>' + (d.data ? d.data.filter(r => r.is_active).map(r => `<option value="${r.id}" data-interval="${r.min_interval_h}">${esc(r.name)}</option>`).join('') : '');
             if (cur) bRule.value = cur;
+            // Kaydedilmiş kural seçimini uygula
+            if (window._pendingRule) {
+                bRule.value = window._pendingRule;
+                window._pendingRule = null;
+                onRuleChange();
+            }
         }
     } catch (e) { console.error(e); }
 }
@@ -589,41 +634,6 @@ async function delRule(id) {
     else alert(d.message);
 }
 
-// ── Tek Gönderim ────────────────────────────────────────────────────
-
-/**
- * Tek e-posta gönderir (/api/send — multipart/form-data).
- * Ek dosya varsa attachment olarak eklenir.
- * HTML modu kapalıysa sunucu düz metni HTML'e çevirir.
- */
-async function sendSingle() {
-    const sp = document.getElementById('c-sp'), btxt = document.getElementById('c-btn-txt');
-    sp.style.display = 'block';
-    btxt.textContent = 'Gönderiliyor...';
-    hideAlert('c-alert');
-    
-    const fd = new FormData();
-    fd.append('sender_id', document.getElementById('c-sender').value);
-    fd.append('recipient', document.getElementById('c-to').value);
-    fd.append('subject', document.getElementById('c-subject').value);
-    fd.append('body', document.getElementById('c-body').value);
-    fd.append('html_mode', document.getElementById('c-html').checked ? 'true' : 'false');
-    fd.append('include_unsubscribe', document.getElementById('c-unsub') && document.getElementById('c-unsub').checked ? 'true' : 'false');
-    
-    const f = document.getElementById('c-file');
-    if (f.files[0]) fd.append('attachment', f.files[0]);
-    
-    try {
-        const d = await (await fetch('/api/send', { method: 'POST', body: fd })).json();
-        showAlert('c-alert', d.message, d.success ? 'ok' : 'err');
-    } catch {
-        showAlert('c-alert', 'İstek hatası.', 'err');
-    } finally {
-        sp.style.display = 'none';
-        btxt.textContent = 'E-posta Gönder →';
-    }
-}
-
 // ── Toplu Gönderim ───────────────────────────────────────────────────
 
 /**
@@ -633,6 +643,12 @@ async function sendSingle() {
  */
 function switchListSource(src) {
     listSource = src;
+    // Aktif kaynağı dataset'e yaz (savePrefs için)
+    document.querySelectorAll('#src-tab-db,#src-tab-excel,#src-tab-paste').forEach(el => {
+        el.dataset.src = el.id.replace('src-tab-','');
+        el.classList.toggle('src-tab-active', el.dataset.src === src);
+    });
+    if (typeof savePrefs === 'function') savePrefs();
     // Tüm panel ve sekme referansları
     const panels = {
         db:    document.getElementById('src-db-panel'),
@@ -747,7 +763,16 @@ async function onDbTableSelect() {
         const esel = document.getElementById('b-db-email-col');
         if (esel) {
             esel.innerHTML = d.columns.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('');
-            const auto = d.columns.find(c => /mail|e.?mail|eposta|email/i.test(c));
+            // Otomatik e-posta kolonu tespiti: önce tam eşleşme, sonra kısmi
+            const emailPatterns = [
+                /^e.?mail$/i, /^e.?posta$/i, /^mail$/i,           // tam eşleşme önce
+                /e.?mail/i, /e.?posta/i, /mail/i, /adres/i        // kısmi eşleşme
+            ];
+            let auto = null;
+            for (const pat of emailPatterns) {
+                auto = d.columns.find(c => pat.test(c));
+                if (auto) break;
+            }
             if (auto) esel.value = auto;
         }
         
@@ -758,6 +783,7 @@ async function onDbTableSelect() {
         
         const totalEl = document.getElementById('b-db-total');
         if (totalEl) totalEl.textContent = d.total;
+        if (typeof updateDelayEstimate === 'function') updateDelayEstimate();
         
         const prevTbl = document.getElementById('b-db-prev-tbl');
         if (prevTbl) {
@@ -849,7 +875,16 @@ async function previewExcel(input) {
         const esel = document.getElementById('b-email-col');
         if (esel) {
             esel.innerHTML = d.columns.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('');
-            const auto = d.columns.find(c => /mail|e.?mail|eposta|email/i.test(c));
+            // Otomatik e-posta kolonu tespiti: önce tam eşleşme, sonra kısmi
+            const emailPatterns = [
+                /^e.?mail$/i, /^e.?posta$/i, /^mail$/i,           // tam eşleşme önce
+                /e.?mail/i, /e.?posta/i, /mail/i, /adres/i        // kısmi eşleşme
+            ];
+            let auto = null;
+            for (const pat of emailPatterns) {
+                auto = d.columns.find(c => pat.test(c));
+                if (auto) break;
+            }
             if (auto) esel.value = auto;
         }
         
@@ -860,12 +895,31 @@ async function previewExcel(input) {
         
         const totalEl = document.getElementById('b-total');
         if (totalEl) totalEl.textContent = d.total;
+        if (typeof updateDelayEstimate === 'function') updateDelayEstimate();
         
         const prevTbl = document.getElementById('b-prev-tbl');
         if (prevTbl) {
             const th = '<tr>' + d.columns.map(c => `<th>${esc(c)}</th>`).join('') + '</tr>';
             const tb = d.preview.map(r => '<tr>' + d.columns.map(c => `<td>${esc(r[c] ?? '')}</td>`).join('') + '</tr>').join('');
             prevTbl.innerHTML = `<table><thead>${th}</thead><tbody>${tb}</tbody></table>`;
+        }
+
+        // risk_score kolonu var mı? → risk eşiği satırını göster/gizle
+        const riskRow = document.getElementById('b-riskscore-row');
+        const hasRisk = d.columns.some(c => c.toLowerCase().includes('risk_score') || c.toLowerCase().includes('risk_label'));
+        if (riskRow) riskRow.style.display = hasRisk ? '' : 'none';
+        if (hasRisk) {
+            // Risk dağılımını hesapla ve göster
+            const riskLabelEl = document.getElementById('b-risk-label');
+            if (riskLabelEl && d.preview) {
+                const riskCol = d.columns.find(c => c.toLowerCase().includes('risk_label')) ||
+                                d.columns.find(c => c.toLowerCase().includes('risk_score'));
+                if (riskCol) {
+                    const dist = {};
+                    d.preview.forEach(r => { const v = r[riskCol] ?? 'N/A'; dist[v] = (dist[v]||0)+1; });
+                    riskLabelEl.textContent = Object.entries(dist).map(([k,v])=>`${k}:${v}`).join(' | ');
+                }
+            }
         }
         
         updateVarTags(d.columns);
@@ -919,7 +973,7 @@ async function promptExcelImport(file, columns) {
     currentExcelFile = file;
     currentDfColumns = columns;
     
-    const defaultTableName = file.name.replace(/\.[^/.]+$/, "").replace(/[^a-zA-Z0-9_]/g, '_').toLowerCase();
+    const defaultTableName = 'mail_list_' + file.name.replace(/\.[^/.]+$/, "").replace(/[^a-zA-Z0-9_]/g, '_').toLowerCase();
     
     // Tablo var mı kontrol et
     const existsCheck = await (await fetch('/api/check-table-exists', {
@@ -1202,7 +1256,22 @@ async function startBulk() {
         fd.append('rule_id', document.getElementById('b-rule').value || '');
         fd.append('email_col', ecol);
         fd.append('var_cols', varCols);
+        // A/B Test: mod ve konu bilgilerini ekle
+        const abEnabled = document.getElementById('b-ab-enable')?.checked;
+        const abMode    = document.querySelector('input[name="ab-mode"]:checked')?.value || 'split';
         fd.append('subject', subj);
+        if (abEnabled) {
+            fd.append('ab_test', 'true');
+            fd.append('ab_mode', abMode);
+            if (abMode === 'split') {
+                const subjB = document.getElementById('b-subject-b')?.value.trim() || '';
+                if (subjB) fd.append('subject_b', subjB);
+            } else if (abMode === 'history') {
+                fd.append('subject_seq_1', document.getElementById('b-subject-seq-1')?.value.trim() || '');
+                fd.append('subject_seq_2', document.getElementById('b-subject-seq-2')?.value.trim() || '');
+                fd.append('subject_seq_3', document.getElementById('b-subject-seq-3')?.value.trim() || '');
+            }
+        }
         fd.append('body', body);
         fd.append('html_mode', document.getElementById('b-html').checked ? 'true' : 'false');
         fd.append('include_unsubscribe', document.getElementById('b-unsub') && document.getElementById('b-unsub').checked ? 'true' : 'false');
@@ -1437,14 +1506,18 @@ async function loadLog(page) {
     const lfStatus = document.getElementById('lf-status');
     const lfSearch = document.getElementById('lf-search');
     
-    const sid = lfSender ? lfSender.value : '';
-    const st = lfStatus ? lfStatus.value : '';
-    const sr = lfSearch ? lfSearch.value : '';
+    const sid        = lfSender ? lfSender.value : '';
+    const st         = lfStatus ? lfStatus.value : '';
+    const sr         = lfSearch ? lfSearch.value : '';
+    const dateFrom   = document.getElementById('lf-date-from')?.value || '';
+    const dateTo     = document.getElementById('lf-date-to')?.value   || '';
     
     let url = `/api/send-log?page=${page}&per_page=50`;
-    if (sid) url += `&sender_id=${sid}`;
-    if (st) url += `&status=${st}`;
-    if (sr) url += `&search=${encodeURIComponent(sr)}`;
+    if (sid)      url += `&sender_id=${sid}`;
+    if (st)       url += `&status=${st}`;
+    if (sr)       url += `&search=${encodeURIComponent(sr)}`;
+    if (dateFrom) url += `&date_from=${dateFrom}`;
+    if (dateTo)   url += `&date_to=${dateTo}`;
     
     try {
         const d = await (await fetch(url)).json();
@@ -1517,7 +1590,6 @@ window.editRuleFn = editRuleFn;
 window.cancelRuleEdit = cancelRuleEdit;
 window.saveRule = saveRule;
 window.delRule = delRule;
-window.sendSingle = sendSingle;
 window.previewExcel = previewExcel;
 window.updateVarTags = updateVarTags;
 window.updateVarTagsFromDb = updateVarTagsFromDb;
@@ -1979,3 +2051,45 @@ async function startBulkFromPaste() {
 window.updatePasteCount    = updatePasteCount;
 window.clearPasteList      = clearPasteList;
 window.deduplicatePasteList = deduplicatePasteList;
+
+/* ── 🧹 Metin Temizleme ─────────────────────────────────────────── */
+let _cleanRemovedList = [];
+
+async function runCleanEmails() {
+    const fileInput = document.getElementById('b-excel');
+    const emailCol  = document.getElementById('b-email-col')?.value || '';
+    const rules = {
+        fix_encoding:    document.getElementById('cl-fix-encoding')?.checked,
+        min_length:      document.getElementById('cl-single-char')?.checked ? 2 : 1,
+        banned_words:    (document.getElementById('cl-banned-words')?.value||'').split(',').map(s=>s.trim()).filter(Boolean),
+        banned_exts:     (document.getElementById('cl-banned-exts')?.value||'').split(',').map(s=>s.trim()).filter(Boolean),
+        custom_patterns: (document.getElementById('cl-custom-patterns')?.value||'').split('\n').map(s=>s.trim()).filter(Boolean),
+    };
+    const fd = new FormData();
+    fd.append('rules', JSON.stringify(rules));
+    fd.append('email_col', emailCol);
+    if (fileInput?.files[0]) fd.append('file', fileInput.files[0]);
+    document.getElementById('cl-result').style.display = 'none';
+    try {
+        const data = await (await fetch('/api/clean-emails', {method:'POST', body:fd})).json();
+        if (!data.success) { alert('Hata: ' + data.message); return; }
+        _cleanRemovedList = data.removed || [];
+        document.getElementById('cl-clean-badge').innerHTML =
+            `<span style="background:#d1fae5;color:#065f46;padding:2px 8px;border-radius:4px">✓ <strong>${data.clean_count}</strong> temiz</span>`;
+        document.getElementById('cl-removed-badge').innerHTML =
+            `<span style="background:#fee2e2;color:#991b1b;padding:2px 8px;border-radius:4px">✗ <strong>${data.removed_count}</strong> kaldırıldı</span>`;
+        document.getElementById('cl-result').style.display = 'block';
+        if (data.clean_count > 0) {
+            const pa = document.getElementById('b-paste-emails');
+            if (pa) { pa.value = data.clean.join('\n'); switchListSource('paste'); updatePasteCount(); }
+        }
+    } catch(e) { alert('Temizleme hatası: ' + e); }
+}
+function showCleanRemoved() {
+    if (!_cleanRemovedList.length) { alert('Kaldırılan adres yok.'); return; }
+    const lines = _cleanRemovedList.map(r=>`${r.email}  →  ${r.reason}`).join('\n');
+    const w = window.open('','_blank','width=700,height=500');
+    w.document.write(`<pre style="font:13px monospace;padding:16px">${lines}</pre>`);
+}
+window.runCleanEmails = runCleanEmails;
+window.showCleanRemoved = showCleanRemoved;

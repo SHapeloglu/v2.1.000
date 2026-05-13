@@ -1,4 +1,4 @@
-{% extends "pages/settings/base.html" %}
+{% extends "pages/settings/settings_base.html" %}
 {% set active_tab = 'smtp' %}
 {% block title %}SMTP Göndericiler{% endblock %}
 {% block subtitle %}SMTP protokolü ile gönderici hesapları{% endblock %}
@@ -86,6 +86,8 @@ async function loadSmtpList() {
                         <td style="padding:12px 16px">${s.use_ssl ? '<span class="chip chip-ok" style="font-size:10px">✓ SSL</span>' : '<span class="chip chip-off" style="font-size:10px">✗</span>'}</td>
                         <td style="padding:12px 16px"><span class="chip ${s.is_active?'chip-on':'chip-off'}">${s.is_active?'Aktif':'Pasif'}</span></td>
                         <td style="padding:12px 16px;white-space:nowrap;text-align:right">
+                            <button class="btn btn-outline btn-sm" onclick="loadReputation(${s.id},this)" title="İtibar Skoru" id="rep-btn-${s.id}">📊</button>
+                            <button class="btn btn-outline btn-sm" onclick="checkDnsbl(${s.id})" title="DNSBL Kara Liste">🛡</button>
                             <button class="btn btn-outline btn-sm" onclick="testSmtp(${s.id})" title="Bağlantı test et">🔌</button>
                             <button class="btn btn-outline btn-sm" onclick="editSmtp(${s.id})" title="Düzenle">✏</button>
                             <button class="btn btn-danger btn-sm" onclick="delSmtp(${s.id})" title="Sil">🗑</button>
@@ -170,7 +172,146 @@ async function delSmtp(id) {
     const d = await (await fetch(`/api/senders/${id}`, {method:'DELETE'})).json();
     if (d.success) loadSmtpList(); else alert(d.message);
 }
+
+// ── Gönderici İtibar Skoru ───────────────────────────────────────────
+const _repColors = {excellent:'#10b981',good:'#10b981',fair:'#f59e0b',poor:'#ef4444',critical:'#ef4444'};
+const _repIcons  = {excellent:'🟢',good:'🟢',fair:'🟡',poor:'🔴',critical:'🔴'};
+let   _repCache  = {};
+
+async function loadReputation(senderId, btn) {
+    const orig = btn ? btn.textContent : '';
+    if (btn) btn.textContent = '⏳';
+    try {
+        const d = await (await fetch(`/api/senders/${senderId}/reputation`)).json();
+        if (btn) btn.textContent = orig;
+        if (!d.success) { showAlert('smtp-alert', '❌ İtibar skoru alınamadı: ' + d.message, 'err'); return; }
+        _repCache[senderId] = d.data;
+        showRepModal(senderId);
+    } catch(e) {
+        if (btn) btn.textContent = orig;
+        showAlert('smtp-alert', '❌ Bağlantı hatası', 'err');
+    }
+}
+
+function showRepModal(senderId) {
+    const rep = _repCache[senderId];
+    if (!rep) return;
+    const col = _repColors[rep.label] || 'var(--muted)';
+    const barColor = s => s>=80?'#10b981':s>=60?'#f59e0b':'#ef4444';
+    const compLabels = {
+        authentication:'Kimlik Doğrulama (SPF/DMARC)',
+        bounce_rate:'Bounce Oranı',
+        complaint_rate:'Şikayet Oranı',
+        dnsbl_status:'DNSBL Kara Liste',
+        send_volume:'Gönderim Hacmi',
+    };
+    const weights = {authentication:30,bounce_rate:25,complaint_rate:25,dnsbl_status:15,send_volume:5};
+    document.getElementById('rep-body').innerHTML = `
+    <div style="text-align:center;margin-bottom:18px">
+        <div style="font-size:42px;font-weight:700;color:${col}">${rep.score}</div>
+        <div style="font-size:13px;font-weight:500;color:${col}">${esc(rep.label_tr||rep.label)}</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:4px">${rep.send_recommended?'✅ Gönderim önerilir':'⛔ Gönderim önerilmez'}</div>
+    </div>
+    <div style="margin-bottom:16px">
+        ${Object.entries(rep.components||{}).map(([k,v])=>`
+        <div style="margin-bottom:8px">
+            <div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:3px">
+                <span>${esc(compLabels[k]||k)}</span>
+                <span style="font-weight:500;color:${barColor(v)}">${v}/100 <span style="color:var(--muted);font-size:10px">(ağırlık %${weights[k]||0})</span></span>
+            </div>
+            <div style="height:5px;background:var(--border);border-radius:3px">
+                <div style="height:100%;width:${v}%;background:${barColor(v)};border-radius:3px;transition:width .4s"></div>
+            </div>
+        </div>`).join('')}
+    </div>
+    ${rep.issues?.length?`
+    <div style="background:rgba(239,68,68,.07);border:1px solid rgba(239,68,68,.2);border-radius:7px;padding:10px">
+        <div style="font-size:11px;font-weight:500;margin-bottom:6px;color:var(--err)">⚠ Tespit edilen sorunlar</div>
+        ${rep.issues.map(i=>`<div style="font-size:11px;color:var(--muted);padding:2px 0">• ${esc(i)}</div>`).join('')}
+    </div>`:'<div style="font-size:11px;color:#10b981;text-align:center">✅ Sorun tespit edilmedi</div>'}
+    ${rep.stats?.total>0?`
+    <div style="display:flex;gap:12px;margin-top:12px;font-size:11px;color:var(--muted)">
+        <span>📤 Son 30 gün: ${(rep.stats.total||0).toLocaleString()}</span>
+        <span>↩ Bounce: ${rep.stats.bounced||0}</span>
+        <span>🚩 Şikayet: ${rep.stats.complained||0}</span>
+    </div>`:''}`;
+    document.getElementById('rep-modal').style.display = 'flex';
+}
+
+function closeRepModal() { document.getElementById('rep-modal').style.display = 'none'; }
+
+// ── DNSBL Kara Liste Kontrolü ────────────────────────────────────────
+async function checkDnsbl(senderId) {
+    const modal = document.getElementById('dnsbl-modal');
+    const body  = document.getElementById('dnsbl-body');
+    modal.style.display = 'flex';
+    body.innerHTML = '<div style="text-align:center;padding:24px;color:var(--muted)">🔍 Spamhaus, Barracuda, SpamCop sorgulanıyor…</div>';
+    try {
+        const d = await (await fetch('/api/senders/dnsbl-check', {
+            method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({sender_id: senderId})
+        })).json();
+        if (!d.success) { body.innerHTML=`<div style="color:var(--err);padding:16px">❌ ${esc(d.message)}</div>`; return; }
+        const data = d.data;
+        const sevColor = {critical:'var(--err)',high:'var(--err)',medium:'var(--warn)',low:'var(--muted)',clean:'var(--ok)'};
+        const sevIcon  = {critical:'🚨',high:'⚠️',medium:'⚡',low:'ℹ️',clean:'✅'};
+        const sev = data.severity||'clean';
+        body.innerHTML = `
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px">
+            <span style="font-size:28px">${sevIcon[sev]||'✅'}</span>
+            <div>
+                <div style="font-size:15px;font-weight:500;color:${sevColor[sev]||'var(--ok)'}">
+                    ${data.listed?`${data.hits?.length||0} kara listede bulundu`:'Tüm listelerde temiz'}
+                </div>
+                <div style="font-size:11px;color:var(--muted)">IP: ${esc(data.ip||'')} · ${esc(data.checked_at||'')}</div>
+            </div>
+        </div>
+        ${data.hits?.length>0?`<div style="margin-bottom:12px">
+            <div style="font-size:12px;font-weight:500;margin-bottom:6px">🚫 Bulunan listeler:</div>
+            ${data.hits.map(h=>`
+            <div style="display:flex;align-items:center;gap:8px;padding:7px 10px;margin-bottom:4px;
+                 background:rgba(239,68,68,.07);border-radius:6px;border-left:3px solid ${sevColor[h.severity]||'var(--err)'}">
+                <div style="flex:1">
+                    <div style="font-size:12px;font-weight:500">${esc(h.rbl)}</div>
+                    <div style="font-size:10px;color:var(--muted)">${esc(h.desc||'')} · ${esc(h.response||'')}</div>
+                </div>
+                <span style="font-size:10px;padding:2px 6px;border-radius:4px;background:rgba(239,68,68,.15);color:var(--err)">${esc(h.severity)}</span>
+            </div>`).join('')}
+        </div>`:''}
+        ${data.clean?.length>0?`<div style="font-size:11px;color:var(--muted)">
+            ✅ Temiz: ${data.clean.slice(0,5).map(r=>esc(r)).join(', ')}${data.clean.length>5?` +${data.clean.length-5} daha`:''}
+        </div>`:''}`;
+    } catch(e) {
+        body.innerHTML = `<div style="color:var(--err);padding:16px">❌ Bağlantı hatası: ${esc(e.message)}</div>`;
+    }
+}
+
+function closeDnsblModal() { document.getElementById('dnsbl-modal').style.display = 'none'; }
+
+document.addEventListener('keydown', e => { if(e.key==='Escape'){ closeRepModal(); closeDnsblModal(); } });
 </script>
+
+<!-- İtibar Skoru Modal -->
+<div id="rep-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9999;align-items:center;justify-content:center">
+    <div style="background:var(--s1);border:1px solid var(--border);border-radius:var(--r2);padding:20px;width:420px;max-width:90vw;max-height:80vh;overflow-y:auto">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+            <div style="font-size:14px;font-weight:500">📊 Gönderici İtibar Skoru</div>
+            <button onclick="closeRepModal()" style="background:none;border:none;font-size:18px;cursor:pointer;color:var(--muted)">×</button>
+        </div>
+        <div id="rep-body"></div>
+    </div>
+</div>
+
+<!-- DNSBL Modal -->
+<div id="dnsbl-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9999;align-items:center;justify-content:center">
+    <div style="background:var(--s1);border:1px solid var(--border);border-radius:var(--r2);padding:20px;width:460px;max-width:90vw;max-height:80vh;overflow-y:auto">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+            <div style="font-size:14px;font-weight:500">🛡 DNSBL Kara Liste Kontrolü</div>
+            <button onclick="closeDnsblModal()" style="background:none;border:none;font-size:18px;cursor:pointer;color:var(--muted)">×</button>
+        </div>
+        <div id="dnsbl-body"></div>
+    </div>
+</div>
 
 {% endblock %}
 

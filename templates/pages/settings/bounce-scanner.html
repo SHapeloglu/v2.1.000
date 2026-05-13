@@ -1,0 +1,514 @@
+{% extends "pages/settings/settings_base.html" %}
+{% set active_tab = 'bounce_scanner' %}
+{% block title %}Bounce Scanner{% endblock %}
+{% block subtitle %}SMTP hesaplarınızdaki hata maillerini otomatik tarayın{% endblock %}
+
+{% block settings_content %}
+
+<!-- SMTP Seçici -->
+<div class="card" style="margin-bottom:20px">
+    <div class="card-title">📬 Bounce Scanner</div>
+    <div style="font-size:12px;color:var(--muted);padding:10px 13px;background:rgba(124,111,253,.06);border:1px solid rgba(124,111,253,.15);border-radius:var(--r);margin-bottom:16px;line-height:1.6">
+        Seçtiğiniz SMTP hesabının IMAP kutusuna bağlanarak <strong>MAILER-DAEMON</strong>, <strong>postmaster</strong> ve <strong>Mail Delivery System</strong> kaynaklı hata maillerini tarar. Sonuçları gözden geçirip seçtiklerinizi suppression listesine ekleyebilirsiniz.
+    </div>
+
+    <div class="fg">
+        <div class="g2">
+            <div class="field">
+                <label>SMTP Gönderici *</label>
+                <select id="bs-sender-select" onchange="onSenderChange(this.value)" style="width:100%">
+                    <option value="">— Gönderici seçin —</option>
+                </select>
+                <span style="font-size:11px;color:var(--muted)">Seçilen göndericinin kullanıcı adı ve şifresiyle IMAP'a bağlanılır</span>
+            </div>
+            <div class="field">
+                <label>IMAP Sunucu <span style="color:var(--muted);font-size:10px">(boş = SMTP sunucusu kullan)</span></label>
+                <input id="bs-imap-host" placeholder="Örn: mail.firma.com veya imap.gmail.com">
+            </div>
+        </div>
+        <div class="g3">
+            <div class="field">
+                <label>IMAP Port</label>
+                <input id="bs-imap-port" value="993" style="width:100%">
+                <div class="pills" style="margin-top:6px">
+                    <button class="pill active" onclick="setIPort(993,this)">993 SSL</button>
+                    <button class="pill" onclick="setIPort(143,this)">143 TLS</button>
+                </div>
+            </div>
+            <div class="field">
+                <label>Tarama Modu</label>
+                <div style="display:flex;flex-direction:column;gap:8px;margin-top:4px">
+                    <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px">
+                        <input type="radio" name="bs-mode" value="unseen" checked style="accent-color:var(--accent)">
+                        <span>🆕 Sadece okunmamışlar</span>
+                    </label>
+                    <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px">
+                        <input type="radio" name="bs-mode" value="all" style="accent-color:var(--accent)">
+                        <span>📂 Tüm mailler (ilk kurulum)</span>
+                    </label>
+                </div>
+            </div>
+            <div class="field">
+                <label>Otomatik Suppression</label>
+                <div class="toggle-row">
+                    <span class="tgl-label">Tarama sonrası otomatik ekle</span>
+                    <label class="tgl"><input type="checkbox" id="bs-suppression"><span class="tgl-sl"></span></label>
+                </div>
+                <span style="font-size:11px;color:var(--muted)">Kapalıysa sonuçları gözden geçirip seçerek eklersiniz</span>
+            </div>
+        </div>
+    </div>
+
+    <div class="btn-row" style="margin-top:16px">
+        <button class="btn btn-primary" id="bs-scan-btn" onclick="startScan()">
+            <div class="sp" id="bs-sp"></div>
+            <span id="bs-btn-txt">🔍 Tara</span>
+        </button>
+        <button class="btn btn-outline" onclick="clearResults()" id="bs-clear-btn" style="display:none">🗑 Temizle</button>
+        <button class="btn btn-outline" onclick="exportCSV()" id="bs-export-btn" style="display:none">📥 CSV İndir</button>
+    </div>
+    <div class="alert" id="bs-alert"></div>
+</div>
+
+<!-- İlerleme -->
+<div id="bs-progress-wrap" style="display:none;margin-bottom:20px">
+    <div class="card" style="padding:16px">
+        <div style="font-size:12px;color:var(--muted);margin-bottom:10px" id="bs-progress-label">Bağlanıyor...</div>
+        <div style="background:var(--s2);border-radius:999px;height:6px;overflow:hidden">
+            <div id="bs-progress-bar" style="height:100%;width:0%;background:linear-gradient(90deg,var(--accent),#f472b6);transition:width .4s ease;border-radius:999px"></div>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:14px">
+            <div style="text-align:center;padding:10px;background:var(--s2);border-radius:var(--r)">
+                <div style="font-size:20px;font-weight:700;color:var(--text)" id="cnt-okunan">0</div>
+                <div style="font-size:10px;color:var(--muted)">Taranan Mail</div>
+            </div>
+            <div style="text-align:center;padding:10px;background:var(--s2);border-radius:var(--r)">
+                <div style="font-size:20px;font-weight:700;color:#f87171" id="cnt-bounce">0</div>
+                <div style="font-size:10px;color:var(--muted)">Bounce Tespit</div>
+            </div>
+            <div style="text-align:center;padding:10px;background:var(--s2);border-radius:var(--r)">
+                <div style="font-size:20px;font-weight:700;color:#34d399" id="cnt-yeni">0</div>
+                <div style="font-size:10px;color:var(--muted)">Yeni Adres</div>
+            </div>
+            <div style="text-align:center;padding:10px;background:var(--s2);border-radius:var(--r)">
+                <div style="font-size:20px;font-weight:700;color:#94a3b8" id="cnt-atlanan">0</div>
+                <div style="font-size:10px;color:var(--muted)">Atlanan</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Sonuç Tablosu -->
+<div id="bs-results-wrap" style="display:none">
+    <div class="card">
+        <!-- Başlık + filtreler -->
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:8px">
+            <div class="card-title" style="margin:0" id="bs-results-title">Sonuçlar</div>
+            <div style="display:flex;gap:6px;flex-wrap:wrap" id="bs-filter-pills">
+                <button class="pill active" onclick="filterTable('',this)">Tümü</button>
+                <button class="pill" onclick="filterTable('kalici',this)">❌ Kalıcı</button>
+                <button class="pill" onclick="filterTable('gecici',this)">⚠️ Geçici</button>
+                <button class="pill" onclick="filterTable('gonderici_sorunu',this)">🔒 Gönderen</button>
+                <button class="pill" onclick="filterTable('mail_loop',this)">🔄 Döngü</button>
+                <button class="pill" onclick="filterTable('internal_domain',this)">🏢 Internal</button>
+            </div>
+        </div>
+
+        <!-- Arama + Hızlı Seçim -->
+        <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;align-items:center">
+            <input id="bs-search" placeholder="🔍 E-posta veya hata kodu ara..." oninput="searchTable()" style="flex:1;min-width:200px;box-sizing:border-box">
+            <button class="btn btn-outline btn-sm" onclick="secimHizli('kalici')" title="Tablodaki tüm kalıcı bounce'ları seç">☑ Kalıcıları Seç</button>
+            <button class="btn btn-outline btn-sm" onclick="secimHizli('all')">☑ Tümünü Seç</button>
+            <button class="btn btn-outline btn-sm" onclick="secimHizli('none')">☐ Temizle</button>
+        </div>
+
+        <!-- Tablo -->
+        <div style="overflow-x:auto">
+            <table style="width:100%;border-collapse:collapse;font-size:12px">
+                <thead>
+                    <tr style="border-bottom:2px solid var(--border)">
+                        <th style="padding:10px 12px;width:32px">
+                            <input type="checkbox" id="chk-all" onchange="toggleAllVisible(this.checked)"
+                                style="accent-color:var(--accent);cursor:pointer;width:14px;height:14px">
+                        </th>
+                        <th style="text-align:left;padding:10px 12px;color:var(--muted);font-weight:600;font-size:11px;white-space:nowrap">E-posta</th>
+                        <th style="text-align:left;padding:10px 12px;color:var(--muted);font-weight:600;font-size:11px;white-space:nowrap">Kategori</th>
+                        <th style="text-align:left;padding:10px 12px;color:var(--muted);font-weight:600;font-size:11px;white-space:nowrap">Hata Kodu</th>
+                        <th style="text-align:left;padding:10px 12px;color:var(--muted);font-weight:600;font-size:11px">Açıklama</th>
+                        <th style="text-align:left;padding:10px 12px;color:var(--muted);font-weight:600;font-size:11px;white-space:nowrap">Kısa Açıklama</th>
+                        <th style="text-align:left;padding:10px 12px;color:var(--muted);font-weight:600;font-size:11px;white-space:nowrap" title="RFC 3463 Enhanced Status Code tablosundan otomatik üretilen etiket">RFC Etiket <span style="font-size:9px;opacity:.6">deneme</span></th>
+                        <th style="text-align:center;padding:10px 12px;color:var(--muted);font-weight:600;font-size:11px;white-space:nowrap">Suppression</th>
+                        <th style="text-align:center;padding:10px 12px;color:var(--muted);font-weight:600;font-size:11px;white-space:nowrap">Durum</th>
+                    </tr>
+                </thead>
+                <tbody id="bs-tbody"></tbody>
+            </table>
+        </div>
+        <div id="bs-empty-msg" style="display:none;text-align:center;padding:30px;color:var(--muted);font-size:13px">Bu kategoride sonuç bulunamadı.</div>
+
+        <!-- Alt bar: seçim özeti + Uygula butonu -->
+        <div id="bs-apply-bar" style="display:none;margin-top:16px;padding:14px 16px;
+             background:var(--s2);border:1px solid var(--border);border-radius:var(--r);
+             align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+            <div style="font-size:13px">
+                <strong id="bs-secim-sayi">0</strong> kayıt seçildi
+                <span id="bs-secim-kalici-bilgi" style="font-size:11px;color:var(--muted);margin-left:8px"></span>
+            </div>
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+                <span style="font-size:11px;color:var(--muted)">Seçilenleri:</span>
+                <button class="btn btn-danger btn-sm" onclick="secilenlerUygula('suppression')" id="bs-apply-supp-btn">
+                    <div class="sp" id="apply-sp" style="display:none"></div>
+                    🚫 Suppression'a Ekle
+                </button>
+                <button class="btn btn-outline btn-sm" onclick="secilenlerUygula('bounce_only')">
+                    📋 Sadece Bounce Kaydı
+                </button>
+            </div>
+        </div>
+
+        <div style="margin-top:8px;font-size:11px;color:var(--muted);text-align:right" id="bs-row-count"></div>
+    </div>
+</div>
+
+<!-- Son Tarama Geçmişi -->
+<div id="bs-history-wrap" style="margin-top:20px">
+    <div class="card">
+        <div class="card-title">🕓 Son Taramalar</div>
+        <div id="bs-history-content">
+            <div style="color:var(--muted);text-align:center;padding:16px;font-size:13px">Yükleniyor...</div>
+        </div>
+    </div>
+</div>
+
+<script>
+let _allResults   = [];
+let _activeFilter = '';
+let _selected     = new Set();
+
+document.addEventListener('DOMContentLoaded', () => {
+    loadSenderList();
+    loadHistory();
+});
+
+async function loadSenderList() {
+    try {
+        const d = await (await fetch('/api/senders')).json();
+        const senders = (d.data || []).filter(s => s.sender_mode === 'smtp' && s.is_active);
+        const sel = document.getElementById('bs-sender-select');
+        if (!senders.length) { sel.innerHTML = '<option value="">— Aktif SMTP gönderici yok —</option>'; return; }
+        senders.forEach(s => {
+            const opt = document.createElement('option');
+            opt.value = s.id;
+            opt.textContent = `${s.name} — ${s.email} (${s.smtp_server})`;
+            opt.dataset.host = s.smtp_server || '';
+            sel.appendChild(opt);
+        });
+    } catch(e) { console.error(e); }
+}
+
+function onSenderChange(val) {
+    if (!val) return;
+    const opt = document.querySelector(`#bs-sender-select option[value="${val}"]`);
+    if (opt?.dataset.host) {
+        const imap = document.getElementById('bs-imap-host');
+        if (!imap.value) imap.placeholder = `Otomatik: ${opt.dataset.host}`;
+    }
+}
+
+function setIPort(port, btn) {
+    document.getElementById('bs-imap-port').value = port;
+    btn.closest('.pills').querySelectorAll('.pill').forEach(p => p.classList.remove('active'));
+    btn.classList.add('active');
+}
+
+// ── Tarama ────────────────────────────────────────────────────────────────
+async function startScan() {
+    const senderId = document.getElementById('bs-sender-select').value;
+    if (!senderId) { showAlert('bs-alert', 'Lütfen bir SMTP gönderici seçin.', 'err'); return; }
+
+    const imapHost = document.getElementById('bs-imap-host').value.trim();
+    const imapPort = parseInt(document.getElementById('bs-imap-port').value) || 993;
+    const mode     = document.querySelector('input[name="bs-mode"]:checked').value;
+    const addSupp  = document.getElementById('bs-suppression').checked;
+
+    document.getElementById('bs-sp').style.display = 'block';
+    document.getElementById('bs-btn-txt').textContent = 'Taranıyor...';
+    document.getElementById('bs-scan-btn').disabled = true;
+    hideAlert('bs-alert');
+    document.getElementById('bs-progress-wrap').style.display = 'block';
+    document.getElementById('bs-results-wrap').style.display  = 'none';
+    document.getElementById('bs-clear-btn').style.display  = 'none';
+    document.getElementById('bs-export-btn').style.display = 'none';
+    _selected.clear();
+    resetCounters();
+    setProgress(5, 'IMAP sunucusuna bağlanıyor...');
+
+    try {
+        const resp = await fetch('/api/bounce-scanner/scan', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ sender_id: parseInt(senderId), imap_host: imapHost || null, imap_port: imapPort, mode, add_suppression: addSupp })
+        });
+        const data = await resp.json();
+
+        if (!data.success) {
+            showAlert('bs-alert', '❌ ' + (data.message || 'Tarama başarısız'), 'err');
+            setProgress(0, '');
+            return;
+        }
+
+        _allResults = data.results || [];
+        setProgress(100, `✅ Tarama tamamlandı — ${data.stats.okunan} mail okundu`);
+        updateCounters(data.stats);
+        renderTable(_allResults);
+        document.getElementById('bs-results-wrap').style.display = 'block';
+        document.getElementById('bs-clear-btn').style.display  = 'inline-flex';
+        if (_allResults.length) document.getElementById('bs-export-btn').style.display = 'inline-flex';
+        document.getElementById('bs-results-title').textContent = `Sonuçlar — ${_allResults.length} bounce tespit edildi`;
+
+        const kaliciN = _allResults.filter(r => r.kategori === 'kalici').length;
+        let alertMsg = `✅ ${data.stats.okunan} mail okundu, ${data.stats.bounce} bounce tespit edildi`;
+        if (!addSupp && kaliciN) {
+            alertMsg += `. ${kaliciN} kalıcı bounce var — aşağıdan seçerek suppression'a ekleyebilirsiniz.`;
+        }
+
+        // Bounce oranı uyarısı
+        if (data.bounce_uyari) {
+            const u = data.bounce_uyari;
+            const renkler = {kritik:'var(--err)',uyari:'var(--warn)',dikkat:'var(--info)'};
+            const uyariEl = document.getElementById('bs-alert');
+            uyariEl.style.display = 'block';
+            uyariEl.className = 'alert alert-err';
+            uyariEl.innerHTML = `<strong>${u.mesaj}</strong><br><small style="opacity:.7">${alertMsg}</small>`;
+        } else {
+            showAlert('bs-alert', alertMsg, 'ok');
+        }
+        loadHistory();
+
+    } catch(e) {
+        showAlert('bs-alert', '❌ Sunucu hatası: ' + e.message, 'err');
+    } finally {
+        document.getElementById('bs-sp').style.display = 'none';
+        document.getElementById('bs-btn-txt').textContent = '🔍 Tara';
+        document.getElementById('bs-scan-btn').disabled = false;
+    }
+}
+
+// ── Checkbox Seçim Sistemi ─────────────────────────────────────────────────
+function toggleSatir(email, checked) {
+    checked ? _selected.add(email) : _selected.delete(email);
+    updateApplyBar();
+    updateHeaderCheckbox();
+    // Satır arkaplanını güncelle
+    const chk = document.querySelector(`.bs-row-chk[data-email="${CSS.escape(email)}"]`);
+    if (chk) chk.closest('tr').style.background = checked ? 'rgba(124,111,253,.06)' : '';
+}
+
+function toggleAllVisible(checked) {
+    document.querySelectorAll('.bs-row-chk').forEach(chk => {
+        chk.checked = checked;
+        checked ? _selected.add(chk.dataset.email) : _selected.delete(chk.dataset.email);
+        chk.closest('tr').style.background = checked ? 'rgba(124,111,253,.06)' : '';
+    });
+    updateApplyBar();
+}
+
+function secimHizli(mod) {
+    const visible = getVisibleRows();
+    _selected.clear();
+    if (mod === 'kalici') visible.filter(r => r.kategori === 'kalici').forEach(r => _selected.add(r.email));
+    else if (mod === 'all') visible.forEach(r => _selected.add(r.email));
+    document.querySelectorAll('.bs-row-chk').forEach(chk => {
+        const sel = _selected.has(chk.dataset.email);
+        chk.checked = sel;
+        chk.closest('tr').style.background = sel ? 'rgba(124,111,253,.06)' : '';
+    });
+    updateApplyBar();
+    updateHeaderCheckbox();
+}
+
+function getVisibleRows() {
+    const search = document.getElementById('bs-search').value.toLowerCase();
+    return _allResults.filter(r => {
+        const matchCat    = !_activeFilter || r.kategori === _activeFilter;
+        const matchSearch = !search || r.email.includes(search) ||
+            (r.hata_kodu||'').toLowerCase().includes(search) ||
+            (r.aciklama ||'').toLowerCase().includes(search);
+        return matchCat && matchSearch;
+    });
+}
+
+function updateApplyBar() {
+    const n      = _selected.size;
+    const kalici = [..._selected].filter(e => {
+        const r = _allResults.find(x => x.email === e);
+        return r && r.kategori === 'kalici';
+    }).length;
+
+    const bar = document.getElementById('bs-apply-bar');
+    bar.style.display = n > 0 ? 'flex' : 'none';
+    document.getElementById('bs-secim-sayi').textContent = n;
+    document.getElementById('bs-secim-kalici-bilgi').textContent =
+        kalici > 0 ? `(${kalici} kalıcı, ${n - kalici} diğer)` : '';
+}
+
+function updateHeaderCheckbox() {
+    const all     = document.querySelectorAll('.bs-row-chk');
+    const checked = [...all].filter(c => c.checked).length;
+    const hdr     = document.getElementById('chk-all');
+    if (!hdr) return;
+    hdr.indeterminate = checked > 0 && checked < all.length;
+    hdr.checked       = all.length > 0 && checked === all.length;
+}
+
+// ── Seçilenleri Uygula ─────────────────────────────────────────────────────
+async function secilenlerUygula(mod) {
+    if (!_selected.size) return;
+
+    const liste = [..._selected].map(email => {
+        const r = _allResults.find(x => x.email === email);
+        return r ? { email: r.email, kategori: r.kategori, hata_kodu: r.hata_kodu||'', aciklama: r.aciklama||'' } : null;
+    }).filter(Boolean);
+
+    const suppression = (mod === 'suppression');
+    document.getElementById('apply-sp').style.display = 'block';
+    document.getElementById('bs-apply-supp-btn').disabled = true;
+
+    let basarili = 0, hatali = 0;
+    for (const item of liste) {
+        try {
+            const d = await (await fetch('/api/bounce-scanner/manuel-ekle', {
+                method: 'POST',
+                headers: {'Content-Type':'application/json'},
+                body: JSON.stringify({ ...item, add_suppression: suppression })
+            })).json();
+            if (d.success) { basarili++; if (suppression) { const r = _allResults.find(x=>x.email===item.email); if(r) r.suppression_eklendi=true; } }
+            else hatali++;
+        } catch { hatali++; }
+    }
+
+    document.getElementById('apply-sp').style.display = 'none';
+    document.getElementById('bs-apply-supp-btn').disabled = false;
+
+    showAlert('bs-alert',
+        (suppression ? `✅ ${basarili} adres suppression listesine eklendi` : `✅ ${basarili} adres bounce kaydına eklendi`) +
+        (hatali ? `, ${hatali} hata` : '.'),
+        basarili > 0 ? 'ok' : 'err');
+
+    _selected.clear();
+    renderTable(_allResults);
+}
+
+// ── Tablo ──────────────────────────────────────────────────────────────────
+const KATEGORI_HTML = {
+    'kalici':           '<span class="chip" style="background:rgba(248,113,113,.15);color:#f87171;font-size:10px">❌ Kalıcı</span>',
+    'gecici':           '<span class="chip" style="background:rgba(251,191,36,.15);color:#fbbf24;font-size:10px">⚠️ Geçici</span>',
+    'gonderici_sorunu': '<span class="chip" style="background:rgba(96,165,250,.15);color:#60a5fa;font-size:10px">🔒 Gönderen</span>',
+    'mail_loop':        '<span class="chip" style="background:rgba(148,163,184,.15);color:#94a3b8;font-size:10px">🔄 Döngü</span>',
+    'internal_domain':  '<span class="chip" style="background:rgba(148,163,184,.12);color:#94a3b8;font-size:10px">🏢 Internal</span>',
+};
+
+function renderTable(rows) {
+    const visible = getVisibleRows();
+    document.getElementById('bs-tbody').innerHTML = visible.map(r => {
+        const sel     = _selected.has(r.email);
+        const suppOk  = r.suppression_eklendi || r.suppression_ekle;
+        const suppHTML = suppOk
+            ? '<span class="chip chip-ok" style="font-size:10px">✓ Eklendi</span>'
+            : '<span class="chip chip-off" style="font-size:10px">—</span>';
+        return `<tr style="border-bottom:1px solid var(--border);transition:background .15s;${sel?'background:rgba(124,111,253,.06)':''}">
+            <td style="padding:10px 12px">
+                <input type="checkbox" class="bs-row-chk" data-email="${esc(r.email)}" ${sel?'checked':''}
+                    onchange="toggleSatir('${esc(r.email)}',this.checked)"
+                    style="accent-color:var(--accent);cursor:pointer;width:14px;height:14px">
+            </td>
+            <td style="padding:10px 12px;font-family:'Space Mono',monospace;font-size:11px">${esc(r.email)}</td>
+            <td style="padding:10px 12px">${KATEGORI_HTML[r.kategori]||r.kategori}</td>
+            <td style="padding:10px 12px;font-family:'Space Mono',monospace;font-size:11px;color:var(--muted)">${esc(r.hata_kodu||'—')}</td>
+            <td style="padding:10px 12px;color:var(--muted);font-size:11px;max-width:260px;word-break:break-word">${esc(r.aciklama||'—')}</td>
+            <td style="padding:10px 12px;white-space:nowrap">${r.etiket
+                ?`<span style="font-size:11px;background:var(--s2);padding:3px 8px;border-radius:6px;border:1px solid var(--border)">${esc(r.etiket)}</span>`
+                :'<span style="color:var(--dim);font-size:11px">—</span>'}</td>
+            <td style="padding:10px 12px;white-space:nowrap">${r.rfc_etiket
+                ?`<span style="font-size:11px;background:rgba(124,111,253,.08);padding:3px 8px;border-radius:6px;border:1px solid rgba(124,111,253,.2);color:var(--accent)">${esc(r.rfc_etiket)}</span>`
+                :'<span style="color:var(--dim);font-size:11px">—</span>'}</td>
+            <td style="padding:10px 12px;text-align:center">${suppHTML}</td>
+            <td style="padding:10px 12px;text-align:center">${r.is_new
+                ?'<span class="chip chip-on" style="font-size:10px">Yeni</span>'
+                :'<span class="chip" style="background:var(--s2);color:var(--muted);font-size:10px">Güncellendi</span>'}</td>
+        </tr>`;
+    }).join('') || '';
+
+    document.getElementById('bs-empty-msg').style.display = visible.length ? 'none' : 'block';
+    document.getElementById('bs-row-count').textContent = visible.length
+        ? `${visible.length} kayıt gösteriliyor${rows.length!==visible.length?' ('+rows.length+' toplam)':''}`
+        : '';
+    updateApplyBar();
+    updateHeaderCheckbox();
+}
+
+function filterTable(kat, btn) {
+    _activeFilter = kat;
+    document.querySelectorAll('#bs-filter-pills .pill').forEach(p=>p.classList.remove('active'));
+    if (btn) btn.classList.add('active');
+    renderTable(_allResults);
+}
+function searchTable() { renderTable(_allResults); }
+
+function clearResults() {
+    _allResults = []; _selected.clear();
+    ['bs-results-wrap','bs-progress-wrap'].forEach(id=>document.getElementById(id).style.display='none');
+    ['bs-clear-btn','bs-export-btn'].forEach(id=>document.getElementById(id).style.display='none');
+    document.getElementById('bs-apply-bar').style.display='none';
+    hideAlert('bs-alert');
+}
+
+function exportCSV() {
+    if (!_allResults.length) return;
+    const csv = [['E-posta','Kategori','Hata Kodu','Açıklama','Kısa Açıklama','Suppression','Durum'],
+        ..._allResults.map(r=>[r.email,r.kategori,r.hata_kodu||'',r.aciklama||'',r.etiket||'',
+            (r.suppression_ekle||r.suppression_eklendi)?'Eklendi':'Hayır',r.is_new?'Yeni':'Güncellendi'])
+    ].map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(',')).join('\r\n');
+    const a=document.createElement('a');
+    a.href=URL.createObjectURL(new Blob(['\uFEFF'+csv],{type:'text/csv;charset=utf-8'}));
+    a.download=`bounce_scan_${new Date().toISOString().slice(0,10)}.csv`;
+    a.click();
+}
+
+async function loadHistory() {
+    try {
+        const d = await (await fetch('/api/bounce-scanner/history')).json();
+        const rows = d.data || [];
+        const wrap = document.getElementById('bs-history-content');
+        if (!rows.length) { wrap.innerHTML='<div style="color:var(--muted);text-align:center;padding:16px;font-size:13px">Henüz tarama yapılmamış.</div>'; return; }
+        wrap.innerHTML=`<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px">
+            <thead><tr style="border-bottom:1px solid var(--border)">
+                <th style="text-align:left;padding:8px 12px;color:var(--muted);font-size:11px">Zaman</th>
+                <th style="text-align:left;padding:8px 12px;color:var(--muted);font-size:11px">Hesap</th>
+                <th style="text-align:center;padding:8px 12px;color:var(--muted);font-size:11px">Okunan</th>
+                <th style="text-align:center;padding:8px 12px;color:var(--muted);font-size:11px">Bounce</th>
+                <th style="text-align:center;padding:8px 12px;color:var(--muted);font-size:11px">Yeni</th>
+                <th style="text-align:center;padding:8px 12px;color:var(--muted);font-size:11px">Atlanan</th>
+                <th style="text-align:left;padding:8px 12px;color:var(--muted);font-size:11px">Hata</th>
+            </tr></thead><tbody>
+            ${rows.map(r=>`<tr style="border-bottom:1px solid var(--border)">
+                <td style="padding:8px 12px;color:var(--muted);white-space:nowrap">${r.tarama_zamani||''}</td>
+                <td style="padding:8px 12px;font-family:'Space Mono',monospace;font-size:11px">${esc(r.hesap||'')}</td>
+                <td style="padding:8px 12px;text-align:center">${r.okunan_mail||0}</td>
+                <td style="padding:8px 12px;text-align:center;color:#f87171;font-weight:600">${r.bulunan_bounce||0}</td>
+                <td style="padding:8px 12px;text-align:center;color:#34d399;font-weight:600">${r.yeni_adres||0}</td>
+                <td style="padding:8px 12px;text-align:center;color:var(--muted)">${r.atlanan||0}</td>
+                <td style="padding:8px 12px;color:#f87171;font-size:11px">${r.hata?esc(r.hata):'—'}</td>
+            </tr>`).join('')}</tbody></table></div>`;
+    } catch(e) { console.error(e); }
+}
+
+function resetCounters() { ['cnt-okunan','cnt-bounce','cnt-yeni','cnt-atlanan'].forEach(id=>document.getElementById(id).textContent='0'); }
+function updateCounters(s) { document.getElementById('cnt-okunan').textContent=s.okunan||0; document.getElementById('cnt-bounce').textContent=s.bounce||0; document.getElementById('cnt-yeni').textContent=s.yeni||0; document.getElementById('cnt-atlanan').textContent=s.atlanan||0; }
+function setProgress(p,l) { document.getElementById('bs-progress-bar').style.width=p+'%'; document.getElementById('bs-progress-label').textContent=l; }
+function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+function showAlert(id,msg,type){const el=document.getElementById(id);if(!el)return;el.textContent=msg;el.className='alert '+(type==='ok'?'alert-ok':'alert-err');el.style.display='block';}
+function hideAlert(id){const el=document.getElementById(id);if(el){el.style.display='none';el.textContent='';}}
+</script>
+
+{% endblock %}

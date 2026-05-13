@@ -298,13 +298,13 @@ def index():
     db_configured = all([os.getenv('DB_HOST'), os.getenv('DB_USER'), os.getenv('DB_NAME')])
     if not db_configured:
         return redirect(url_for('settings_db'))   # DB ayarları yapılmamış → ayarlar sayfası
-    return redirect(url_for('bulk_send_page'))    # Her şey tamam → toplu gönderim
+    return redirect(url_for('dashboard_page'))   # Her şey tamam → dashboard
 
-@app.route('/single-send')
+@app.route('/dashboard')
 @login_required
-def single_send_page():
-    """Tek mail gönderim sayfasını render eder."""
-    return render_template('pages/single-send.html')
+def dashboard_page():
+    """Dashboard — sistem durumu, günlük istatistikler, bounce oranı, uyarılar."""
+    return render_template('pages/dashboard.html')
 
 @app.route('/bulk-send')
 @login_required
@@ -679,7 +679,7 @@ def brevo_quota(sid):
 @app.route('/api/rules', methods=['GET'])
 @login_required
 def list_rules():
-    """Tüm gönderim kurallarını listeler."""
+    """Tum gonderim kurallarini listeler."""
     rows = db().get_rules()
     for r in rows:
         if isinstance(r.get('created_at'), datetime.datetime):
@@ -690,11 +690,12 @@ def list_rules():
 @login_required
 @csrf_protect
 def create_rule():
-    """Yeni gönderim kuralı oluşturur."""
+    """Yeni gonderim kurali olusturur (gonderici veya kullanici bazli)."""
     data = request.json
-    for f in ['name','sender_id','min_interval_h']:
-        if data.get(f) is None:
-            return jsonify({'success': False, 'message': f'{f} zorunludur.'})
+    if not data.get('name') or data.get('min_interval_h') is None:
+        return jsonify({'success': False, 'message': 'Ad ve min_interval_h zorunludur.'})
+    if not data.get('sender_id') and not data.get('user_id'):
+        return jsonify({'success': False, 'message': 'Gonderici veya kullanici secilmelidir.'})
     data.setdefault('is_active', 1)
     ok, result = db().save_rule(data)
     return jsonify({'success': ok, 'message': 'Kaydedildi.' if ok else result, 'id': result if ok else None})
@@ -718,92 +719,114 @@ def remove_rule(rid):
     return jsonify({'success': ok, 'message': msg})
 
 # ─── Single Send API ──────────────────────────────────────────────────
-@app.route('/api/send', methods=['POST'])
-@login_required
-@rate_limit(30, 60)
-def send_single():
-    """
-    Tek e-posta gönderir (multipart/form-data).
-    Gönderim moduna göre send_via_ses / send_via_api / send_one çağrılır.
-    Her gönderim sonucu send_log tablosuna kaydedilir (sent/failed).
-    Ek dosya varsa (attachment) isteğe bağlı olarak eklenir.
-    """
-    sender_id = request.form.get('sender_id')
-    recipient = request.form.get('recipient','').strip()
-    subject   = request.form.get('subject','').strip()
-    body      = request.form.get('body','').strip()
-    html_mode = request.form.get('html_mode') == 'true'
-
-    if not all([sender_id, recipient, subject, body]):
-        return jsonify({'success': False, 'message': 'Tüm alanları doldurun.'})
-
-    row = db().get_sender(int(sender_id))
-    if not row:
-        return jsonify({'success': False, 'message': 'Gönderici bulunamadı.'})
-
-    # html_mode=false ise düz metni HTML'e çevir (satır sonları <br> olur)
-    body_html = body if html_mode else plain_to_html(body)
-    include_unsubscribe = request.form.get('include_unsubscribe') == 'true'
-
-    # Ek dosya varsa belleğe al: (dosya_adı, bytes)
-    attachment = None
-    if 'attachment' in request.files:
-        f = request.files['attachment']
-        if f.filename:
-            valid_att, err_att = validate_attachment(f)
-            if not valid_att:
-                return jsonify({'success': False, 'message': err_att})
-            attachment = (safe_attachment_filename(f.filename), f.read())
-
-    try:
-        if row.get('sender_mode') == 'ses':
-            # AWS SES ile gönder
-            try:
-                send_via_ses(row, recipient, subject, body_html, attachment, include_unsubscribe=include_unsubscribe)
-                ok, err = True, None
-            except Exception as e:
-                ok, err = False, str(e)
-        elif row.get('sender_mode') == 'api':
-            # Üçüncü taraf mail API'si ile gönder
-            try:
-                recip_name = request.form.get('recipient_name', '').strip()
-                send_via_api(row, recipient, subject, body_html, recipient_name=recip_name, include_unsubscribe=include_unsubscribe)
-                ok, err = True, None
-            except Exception as e:
-                ok, err = False, str(e)
-        else:
-            # SMTP ile gönder
-            ok, err = send_one(row, recipient, subject, body_html, attachment, include_unsubscribe=include_unsubscribe)
-
-        # Sonucu logla — başarı veya hata fark etmeksizin
-        status = 'sent' if ok else 'failed'
-        db().log_send(row['id'], None, recipient, subject, status, err)
-
-        if ok:
-            return jsonify({'success': True, 'message': 'E-posta gönderildi! ✓'})
-        else:
-            return jsonify({'success': False, 'message': f'Hata: {err}'})
-
-    except Exception as e:
-        # Beklenmeyen hata — logla ve kullanıcıya bildir
-        db().log_send(row['id'], None, recipient, subject, 'failed', str(e))
-        return jsonify({'success': False, 'message': f'Beklenmeyen hata: {str(e)}'})
-
 # ─── Excel Preview API ────────────────────────────────────────────────
+
+@app.route('/api/clean-emails', methods=['POST'])
+@login_required
+def clean_emails():
+    import re, io, json
+    import pandas as pd
+    file = request.files.get('file')
+    rules_raw = request.form.get('rules', '{}')
+    email_col = request.form.get('email_col', '')
+    try:
+        rules = json.loads(rules_raw)
+    except Exception:
+        rules = {}
+    fix_encoding = rules.get('fix_encoding', True)
+    min_length   = int(rules.get('min_length', 2))
+    banned_words = [w.strip().lower() for w in rules.get('banned_words', []) if w.strip()]
+    banned_exts  = [e.strip().lower().lstrip('.') for e in rules.get('banned_exts', []) if e.strip()]
+    custom_pats  = [p.strip() for p in rules.get('custom_patterns', []) if p.strip()]
+    try:
+        if file:
+            filename = (file.filename or '').lower()
+            raw = file.read()
+            if filename.endswith('.csv'):
+                for enc in ('utf-8-sig', 'utf-8', 'latin-1', 'cp1254'):
+                    try:
+                        df = pd.read_csv(io.BytesIO(raw), encoding=enc, sep=None, engine='python')
+                        break
+                    except Exception:
+                        continue
+                else:
+                    return jsonify({'success': False, 'message': 'CSV okunamadı'})
+            else:
+                df = pd.read_excel(io.BytesIO(raw))
+            if not email_col or email_col not in df.columns:
+                for col in df.columns:
+                    if 'mail' in col.lower():
+                        email_col = col; break
+                else:
+                    email_col = df.columns[0]
+            emails_raw = df[email_col].dropna().astype(str).tolist()
+        else:
+            body = request.get_json(silent=True) or {}
+            emails_raw = body.get('emails', [])
+        clean, removed = [], []
+        for raw_email in emails_raw:
+            email = raw_email.strip()
+            reason = None
+            if fix_encoding:
+                try:
+                    dec = email.encode('utf-8').decode('unicode_escape')
+                    if '@' in dec: email = dec.strip()
+                except Exception: pass
+                email = re.sub(r'u00[0-9a-fA-F]{2}', '', email).strip()
+            local = email.split('@')[0].lower() if '@' in email else email.lower()
+            domain_part = email.split('@')[1].lower() if '@' in email else ''
+            if len(local) < min_length:
+                reason = f'Çok kısa ({len(local)} karakter)'
+            if not reason:
+                for word in banned_words:
+                    if word in local or word in domain_part:
+                        reason = f'Yasaklı kelime: {word}'; break
+            if not reason:
+                for ext in banned_exts:
+                    if domain_part.endswith('.' + ext):
+                        reason = f'Yasaklı uzantı: .{ext}'; break
+            if not reason:
+                for pat in custom_pats:
+                    try:
+                        if re.search(pat, email, re.IGNORECASE):
+                            reason = f'Özel kural: {pat}'; break
+                    except re.error:
+                        if pat.lower() in email.lower():
+                            reason = f'Özel kural: {pat}'; break
+            if reason: removed.append({'email': raw_email.strip(), 'reason': reason})
+            else: clean.append(email)
+        return jsonify({'success': True, 'clean': clean, 'removed': removed,
+                        'clean_count': len(clean), 'removed_count': len(removed),
+                        'total': len(clean)+len(removed)})
+    except Exception as e:
+        import traceback; print(f"[clean_emails] {e}\n{traceback.format_exc()}")
+        return jsonify({'success': False, 'message': str(e)})
+
 @app.route('/api/preview-excel', methods=['POST'])
 @login_required
 def preview_excel():
-    """Excel dosyasını okuyup önizleme bilgilerini döndürür"""
+    """Excel veya CSV dosyasını okuyup önizleme bilgilerini döndürür"""
     try:
         if 'excel' not in request.files:
             return jsonify({'success': False, 'message': 'Dosya yok'})
-        
         file = request.files['excel']
-        valid, err = validate_excel_upload(file)
-        if not valid:
-            return jsonify({'success': False, 'message': err})
-
-        df = pd.read_excel(file)
+        filename = (file.filename or '').lower()
+        if filename.endswith('.csv'):
+            import io
+            raw = file.read()
+            for enc in ('utf-8-sig', 'utf-8', 'latin-1', 'cp1254'):
+                try:
+                    df = pd.read_csv(io.BytesIO(raw), encoding=enc, sep=None, engine='python')
+                    break
+                except Exception:
+                    continue
+            else:
+                return jsonify({'success': False, 'message': 'CSV okunamadı'})
+        else:
+            valid, err = validate_excel_upload(file)
+            if not valid:
+                return jsonify({'success': False, 'message': err})
+            df = pd.read_excel(file)
         columns = df.columns.tolist()
         
         preview = []
@@ -869,6 +892,135 @@ def count_table_rows():
         return jsonify({'success': False, 'count': 0, 'message': str(e)})
 
 
+@app.route('/api/send/single', methods=['POST'])
+@login_required
+@rate_limit(30, 60)
+def api_send_single():
+    """Tek alıcıya anlık mail gönderir. body_html send_log'a kaydedilir (retry için)."""
+    from mailer import send_one, send_via_ses, send_via_api, is_valid_email, is_suppressed, plain_to_html
+    import database as _db_mod
+
+    sender_id           = request.form.get('sender_id', '').strip()
+    to                  = request.form.get('to', '').strip().lower()
+    subject             = request.form.get('subject', '').strip()
+    body                = request.form.get('body', '').strip()
+    html_mode           = request.form.get('html_mode') == 'true'
+    include_unsubscribe = request.form.get('include_unsubscribe') == 'true'
+    attachment_file     = request.files.get('attachment')
+
+    if not all([sender_id, to, subject, body]):
+        return jsonify({'success': False, 'message': 'Tüm alanlar zorunludur.'})
+    if not is_valid_email(to):
+        return jsonify({'success': False, 'message': 'Geçersiz e-posta adresi.'})
+    if is_suppressed(to):
+        return jsonify({'success': False, 'message': 'Bu adres suppression listesinde.'})
+
+    sender_row = db().get_sender(int(sender_id))
+    if not sender_row:
+        return jsonify({'success': False, 'message': 'Gönderici bulunamadı.'})
+
+    body_html  = body if html_mode else plain_to_html(body)
+    attachment = None
+    if attachment_file and attachment_file.filename:
+        attachment = (attachment_file.filename, attachment_file.read(), attachment_file.content_type)
+
+    user_id  = session.get('user_id')
+    username = session.get('username', 'sistem')
+    mode     = sender_row.get('sender_mode', 'smtp')
+
+    try:
+        message_id = None
+        if mode == 'smtp':
+            ok, err = send_one(sender_row, to, subject, body_html,
+                               attachment=attachment, include_unsubscribe=include_unsubscribe)
+            provider = 'smtp'
+        elif mode == 'ses':
+            result = send_via_ses(sender_row, to, subject, body_html,
+                                  attachment=attachment, include_unsubscribe=include_unsubscribe)
+            ok, err = result[0], result[1]
+            message_id = result[2] if len(result) > 2 else None
+            provider = 'ses'
+        else:
+            ok, err = send_via_api(sender_row, to, subject, body_html,
+                                   include_unsubscribe=include_unsubscribe)
+            provider = mode
+
+        _db_mod.log_send(
+            sender_id=int(sender_id), rule_id=None,
+            recipient=to, subject=subject,
+            status='sent' if ok else 'failed',
+            error_msg=err if not ok else None,
+            user_id=user_id, username=username,
+            message_id=str(message_id) if message_id else None,
+            provider=provider, body_html=body_html
+        )
+
+        if ok:
+            return jsonify({'success': True, 'message': 'Mail gönderildi.',
+                            'message_id': str(message_id) if message_id else None})
+        return jsonify({'success': False, 'message': err or 'Gönderim başarısız.'})
+
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'Sunucu hatası: {str(e)}'})
+
+
+@app.route('/single-send')
+@login_required
+def single_send_page():
+    """Tek alıcıya hızlı mail gönderme sayfası."""
+    return render_template('pages/single-send.html')
+
+
+@app.route('/api/bounce-scanner/manuel-ekle', methods=['POST'])
+@login_required
+@rate_limit(60, 60)
+def api_bounce_manuel_ekle():
+    """Seçilen bounce kaydını bounce_adresleri + isteğe bağlı suppression'a ekler."""
+    data            = request.get_json(silent=True) or {}
+    email           = (data.get('email') or '').strip().lower()
+    kategori        = (data.get('kategori') or 'kalici').strip()
+    hata_kodu       = (data.get('hata_kodu') or '').strip()
+    aciklama        = (data.get('aciklama') or '').strip()
+    add_suppression = bool(data.get('add_suppression', False))
+    if not email:
+        return jsonify({'success': False, 'message': 'E-posta gerekli.'})
+    bounce_tipi = 'kalici' if kategori in ('kalici', 'gonderici_sorunu') else 'gecici'
+    bounce = {'email': email, 'bounce_tipi': bounce_tipi, 'kategori': kategori,
+              'hata_kodu': hata_kodu, 'aciklama': aciklama, 'diagnostic': '', 'suppression_ekle': False}
+    try:
+        sonuc = db().bounce_kaydet(bounce)
+        if add_suppression:
+            db().add_to_suppression(email=email, reason='bounce', source='bounce_scanner_manuel')
+        return jsonify({'success': True, 'sonuc': sonuc})
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)})
+
+
+@app.route('/api/suppression/batch-check', methods=['POST'])
+@login_required
+@rate_limit(20, 60)
+def suppression_batch_check():
+    """CSV'den gelen e-posta listesini suppression tablosuyla karşılaştırır."""
+    data   = request.get_json(silent=True) or {}
+    emails = data.get('emails', [])
+    if not isinstance(emails, list):
+        return jsonify({'success': False, 'message': 'emails listesi gerekli.'})
+    emails = [str(e).lower().strip() for e in emails[:5000] if e]
+    if not emails:
+        return jsonify({'success': True, 'blocked': []})
+    try:
+        from database import get_connection
+        conn = get_connection()
+        with conn.cursor() as cur:
+            placeholders = ','.join(['%s'] * len(emails))
+            cur.execute(f'SELECT email FROM suppression_list WHERE email IN ({placeholders})', emails)
+            rows = cur.fetchall()
+        conn.close()
+        return jsonify({'success': True, 'blocked': [r['email'] for r in rows]})
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)})
+
+
 @app.route('/api/send-bulk', methods=['POST'])
 @login_required
 @rate_limit(20, 60)
@@ -887,7 +1039,13 @@ def send_bulk():
         rule_id     = request.form.get('rule_id') or None
         email_col   = request.form.get('email_col')
         var_cols    = request.form.get('var_cols', '').split(',') if request.form.get('var_cols') else []
-        subject_tpl = request.form.get('subject', '').strip()
+        subject_tpl  = request.form.get('subject', '').strip()
+        subject_tpl_b   = request.form.get('subject_b', '').strip()  # A/B test B konusu
+        ab_mode         = request.form.get('ab_mode', 'split')       # 'split' | 'history'
+        subject_seq_1   = request.form.get('subject_seq_1', '').strip()  # 0 önceki gönderim
+        subject_seq_2   = request.form.get('subject_seq_2', '').strip()  # 1 önceki gönderim
+        subject_seq_3   = request.form.get('subject_seq_3', '').strip()  # 2+ önceki gönderim
+        ab_test         = request.form.get('ab_test') == 'true' and (bool(subject_tpl_b) or ab_mode == 'history')
         body_tpl    = request.form.get('body', '').strip()
         html_mode   = request.form.get('html_mode') == 'true'
         delay_ms    = int(request.form.get('delay_ms', 500))
@@ -918,7 +1076,10 @@ def send_bulk():
         batch_limit  = int(request.form.get('batch_limit', 0))
 
         # MX kontrolü aktif mi? Form'dan al (varsayılan: aktif)
-        use_mx_check = request.form.get('mx_check', 'true') == 'true'
+        use_mx_check       = request.form.get('mx_check', 'true') == 'true'
+        filter_role        = request.form.get('filter_role', 'false') == 'true'
+        filter_disposable  = request.form.get('filter_disposable', 'true') == 'true'
+        filter_catchall    = request.form.get('filter_catchall', 'false') == 'true'
 
         valid_rows   = []
         invalid_rows = []   # format veya MX hatası olan satırlar
@@ -934,7 +1095,12 @@ def send_bulk():
                 em = str(em).strip()
                 if not em:
                     continue
-                ok, reason = is_valid_email_with_mx(em, use_mx=use_mx_check)
+                ok, reason = is_valid_email_with_mx(
+                    em, use_mx=use_mx_check,
+                    filter_role=filter_role,
+                    filter_disposable=filter_disposable,
+                    filter_catchall=filter_catchall,
+                )
                 if ok:
                     valid_rows.append({'email': em})  # Dict formatı stream() ile uyumlu
                 else:
@@ -949,7 +1115,12 @@ def send_bulk():
                 if not email:
                     continue
                 email_str = str(email).strip()
-                ok, reason = is_valid_email_with_mx(email_str, use_mx=use_mx_check)
+                ok, reason = is_valid_email_with_mx(
+                    email_str, use_mx=use_mx_check,
+                    filter_role=filter_role,
+                    filter_disposable=filter_disposable,
+                    filter_catchall=filter_catchall,
+                )
                 if ok:
                     valid_rows.append(row)
                 else:
@@ -965,6 +1136,9 @@ def send_bulk():
         
         rule_row = db().get_rule(int(rule_id)) if rule_id else None
         min_interval_h = int(rule_row['min_interval_h']) if rule_row else 0
+
+        # Kullanıcı kimliği (can_send kullanıcı bazlı kural kontrolü için kullanır)
+        _uid_pre = session.get('user_id')
         
         attachment = None
         if 'attachment' in request.files:
@@ -987,6 +1161,15 @@ def send_bulk():
                 yield sse({'type': 'error', 'message': 'Geçerli e-posta bulunamadı'})
                 return
 
+            # ── Bulk performans önbellekleri — oturum başında bir kez yükle ──
+            import database as _db_mod
+            _supp_set        = _db_mod.load_suppression_set()
+            _sender_cache    = {}
+            _user_rule_cache = {}
+            _sent_today_cache = {sender_row['id']: _db_mod.get_sender_sent_today(sender_row['id'])}
+            _bulk_conn       = _db_mod.get_connection()
+            _log_buffer      = []
+
             # Toplu gönderim başlangıcını logla
             db().audit(_uid, _uname, 'bulk_start', 'bulk', _bulk_file,
                        detail=f"total={total} sender_id={sender_id} invalid={len(invalid_rows)}",
@@ -998,8 +1181,10 @@ def send_bulk():
             # Geçersiz formatlı adresleri önce skipped olarak raporla
             for inv_i, (inv_email, inv_reason) in enumerate(invalid_rows, 1):
                 skip_c += 1
-                db().log_send(sender_row['id'], rule_id and int(rule_id), inv_email,
-                              subject_tpl, 'skipped', inv_reason, user_id=_uid, username=_uname)
+                _log_buffer.append({'sender_id': sender_row['id'], 'rule_id': rule_id and int(rule_id),
+                    'recipient': inv_email, 'subject': subject_tpl, 'status': 'skipped',
+                    'error_msg': inv_reason, 'message_id': None, 'provider': None,
+                    'user_id': _uid, 'username': _uname})
                 yield sse({'type': 'progress', 'i': inv_i, 'total': total,
                            'email': inv_email, 'status': 'skipped', 'reason': inv_reason})
             
@@ -1021,41 +1206,103 @@ def send_bulk():
                             is_na = val is None
                         variables[col] = '' if is_na else str(val)
                 
-                allowed, reason = db().can_send(sender_row['id'], email, min_interval_h)
+                allowed, reason = _db_mod.can_send_ctx(
+                    _bulk_conn, sender_row['id'], email, min_interval_h,
+                    user_id=_uid,
+                    _sender_cache=_sender_cache,
+                    _suppression_set=_supp_set,
+                    _user_rule_cache=_user_rule_cache,
+                    _sent_today_cache=_sent_today_cache,
+                )
                 if not allowed:
                     skip_c += 1
-                    db().log_send(sender_row['id'], rule_id and int(rule_id), email, subject_tpl, 'skipped', reason, user_id=_uid, username=_uname)
+                    _log_buffer.append({'sender_id': sender_row['id'], 'rule_id': rule_id and int(rule_id),
+                        'recipient': email, 'subject': subject_tpl, 'status': 'skipped', 'error_msg': reason,
+                        'message_id': None, 'provider': None, 'user_id': _uid, 'username': _uname})
+                    if len(_log_buffer) >= 50:
+                        _db_mod.log_send_bulk(_log_buffer); _log_buffer.clear()
                     yield sse({'type': 'progress', 'i': i, 'total': total, 'email': email, 'status': 'skipped', 'reason': reason})
                     yield from heartbeat_sleep(delay_ms)
                     continue
                 
-                subject = render_template_str(subject_tpl, variables)
+                # A/B Test konu seçimi
+                if ab_test and ab_mode == 'history':
+                    # Geçmiş gönderim sayısına göre konu seç
+                    try:
+                        sent_count = db().get_sent_count_to_recipient(sender_row['id'], email)
+                    except Exception:
+                        sent_count = 0
+                    if sent_count == 0:
+                        active_subject_tpl = subject_seq_1 or subject_tpl
+                        ab_label = 'SEQ:1'
+                    elif sent_count == 1:
+                        active_subject_tpl = subject_seq_2 or subject_tpl
+                        ab_label = 'SEQ:2'
+                    else:
+                        active_subject_tpl = subject_seq_3 or subject_tpl
+                        ab_label = 'SEQ:3+'
+                elif ab_test and subject_tpl_b:
+                    # Split modu: ilk %50 A, son %50 B
+                    half = len(valid_rows) // 2
+                    row_index = i - len(invalid_rows) - 1
+                    active_subject_tpl = subject_tpl if row_index < half else subject_tpl_b
+                    ab_label = 'A' if row_index < half else 'B'
+                else:
+                    active_subject_tpl = subject_tpl
+                    ab_label = None
+
+                subject = render_template_str(active_subject_tpl, variables)
                 body = render_template_str(body_tpl, variables)
                 body_html = body if html_mode else plain_to_html(body)
                 
                 try:
-                    if sender_row.get('sender_mode') == 'ses':
-                        send_via_ses(sender_row, email, subject, body_html, attachment, include_unsubscribe=include_unsubscribe)
-                    elif sender_row.get('sender_mode') == 'api':
+                    # Madde 8: msg_id ve provider yakalanıyor
+                    _mode1 = sender_row.get('sender_mode', 'smtp')
+                    _msg_id1 = None
+                    if _mode1 == 'ses':
+                        _msg_id1 = send_via_ses(sender_row, email, subject, body_html, attachment, include_unsubscribe=include_unsubscribe)
+                    elif _mode1 == 'api':
                         variables_for_name = variables if variables else {}
                         recipient_name = variables_for_name.get('name') or variables_for_name.get('ad') or ''
-                        send_via_api(sender_row, email, subject, body_html, recipient_name=recipient_name, include_unsubscribe=include_unsubscribe)
+                        _ok1, _ret1 = send_via_api(sender_row, email, subject, body_html, recipient_name=recipient_name, include_unsubscribe=include_unsubscribe)
+                        if isinstance(_ret1, str) and len(_ret1) < 500:
+                            _msg_id1 = _ret1
                     else:
                         ok, err = send_one(sender_row, email, subject, body_html, attachment, include_unsubscribe=include_unsubscribe)
                         if not ok:
                             raise Exception(err)
-                    
+
                     ok_c += 1
-                    db().log_send(sender_row['id'], rule_id and int(rule_id), email, subject, 'sent', user_id=_uid, username=_uname)
-                    yield sse({'type': 'progress', 'i': i, 'total': total, 'email': email, 'status': 'ok'})
-                    
+                    if _sent_today_cache is not None:
+                        _sent_today_cache[sender_row['id']] = _sent_today_cache.get(sender_row['id'], 0) + 1
+                    log_subject = f"[A/B:{ab_label}] {subject}" if ab_label else subject
+                    _log_buffer.append({'sender_id': sender_row['id'], 'rule_id': rule_id and int(rule_id),
+                        'recipient': email, 'subject': log_subject, 'status': 'sent', 'error_msg': None,
+                        'message_id': _msg_id1, 'provider': _mode1, 'user_id': _uid, 'username': _uname})
+                    if len(_log_buffer) >= 50:
+                        _db_mod.log_send_bulk(_log_buffer); _log_buffer.clear()
+                    yield sse({'type': 'progress', 'i': i, 'total': total, 'email': email, 'status': 'ok',
+                               'ab': ab_label})
+
                 except Exception as e:
                     err_c += 1
-                    db().log_send(sender_row['id'], rule_id and int(rule_id), email, subject, 'failed', str(e), user_id=_uid, username=_uname)
+                    _log_buffer.append({'sender_id': sender_row['id'], 'rule_id': rule_id and int(rule_id),
+                        'recipient': email, 'subject': subject, 'status': 'failed', 'error_msg': str(e),
+                        'message_id': None, 'provider': _mode1 if '_mode1' in dir() else None,
+                        'user_id': _uid, 'username': _uname})
+                    if len(_log_buffer) >= 50:
+                        _db_mod.log_send_bulk(_log_buffer); _log_buffer.clear()
                     yield sse({'type': 'progress', 'i': i, 'total': total, 'email': email, 'status': 'error', 'error': str(e)})
                 
                 yield from heartbeat_sleep(delay_ms)
             
+            # Kalan log tamponunu flush et
+            if _log_buffer:
+                _db_mod.log_send_bulk(_log_buffer); _log_buffer.clear()
+            try:
+                _bulk_conn.close()
+            except Exception:
+                pass
             db().audit(_uid, _uname, 'bulk_done', 'bulk', _bulk_file,
                        detail=f"ok={ok_c} err={err_c} skipped={skip_c} total={total}",
                        ip_address=_ip)
@@ -1107,6 +1354,9 @@ def send_bulk_ses():
     rule_row = db().get_rule(int(rule_id)) if rule_id else None
     min_interval_h = int(rule_row['min_interval_h']) if rule_row else 0
 
+    # Kullanıcı kimliği (can_send kullanıcı bazlı kural kontrolü için kullanır)
+    _uid2_pre = session.get('user_id')
+
     attachment = None
     if 'attachment' in request.files:
         att = request.files['attachment']
@@ -1154,6 +1404,15 @@ def send_bulk_ses():
         if total == 0:
             yield sse({'type':'error','message':'Geçerli e-posta bulunamadı.'}); return
 
+        # ── Bulk performans önbellekleri ──────────────────────────────
+        import database as _db_mod2
+        _supp_set2        = _db_mod2.load_suppression_set()
+        _sender_cache2    = {}
+        _user_rule_cache2 = {}
+        _sent_today_cache2 = {sender_row['id']: _db_mod2.get_sender_sent_today(sender_row['id'])}
+        _bulk_conn2       = _db_mod2.get_connection()
+        _log_buffer2      = []
+
         db().audit(_uid2, _uname2, 'bulk_start', 'bulk', table_name,
                    detail=f"total={total} sender_id={sender_id} source=db",
                    ip_address=_ip2)
@@ -1165,10 +1424,18 @@ def send_bulk_ses():
             email = str(row[email_col]).strip()
             variables = {k: ('' if v is None else str(v)) for k,v in row.items()}
 
-            allowed, reason = db().can_send(sender_row['id'], email, min_interval_h)
+            allowed, reason = _db_mod2.can_send_ctx(
+                _bulk_conn2, sender_row['id'], email, min_interval_h, user_id=_uid2,
+                _sender_cache=_sender_cache2, _suppression_set=_supp_set2,
+                _user_rule_cache=_user_rule_cache2, _sent_today_cache=_sent_today_cache2,
+            )
             if not allowed:
                 skip_c += 1
-                db().log_send(sender_row['id'], rule_id and int(rule_id), email, subject_tpl, 'skipped', reason, user_id=_uid2, username=_uname2)
+                _log_buffer2.append({'sender_id': sender_row['id'], 'rule_id': rule_id and int(rule_id),
+                    'recipient': email, 'subject': subject_tpl, 'status': 'skipped', 'error_msg': reason,
+                    'message_id': None, 'provider': None, 'user_id': _uid2, 'username': _uname2})
+                if len(_log_buffer2) >= 50:
+                    _db_mod2.log_send_bulk(_log_buffer2); _log_buffer2.clear()
                 yield sse({'type':'progress','i':i,'total':total,'email':email,'status':'skipped','reason':reason})
                 yield from heartbeat_sleep(delay_ms)
                 continue
@@ -1178,21 +1445,43 @@ def send_bulk_ses():
             body_html = body if html_mode else plain_to_html(body)
 
             try:
-                if sender_row.get('sender_mode') == 'api':
+                # Madde 8: msg_id ve provider yakalanıyor
+                _mode2 = sender_row.get('sender_mode', 'smtp')
+                _msg_id2 = None
+                if _mode2 == 'api':
                     recipient_name = str(variables.get('name', '') or variables.get('ad', ''))
-                    send_via_api(sender_row, email, subj, body_html, recipient_name=recipient_name, include_unsubscribe=include_unsubscribe)
+                    _ok2, _ret2 = send_via_api(sender_row, email, subj, body_html, recipient_name=recipient_name, include_unsubscribe=include_unsubscribe)
+                    if isinstance(_ret2, str) and len(_ret2) < 500:
+                        _msg_id2 = _ret2
                 else:
-                    send_via_ses(sender_row, email, subj, body_html, attachment, include_unsubscribe=include_unsubscribe)
+                    _msg_id2 = send_via_ses(sender_row, email, subj, body_html, attachment, include_unsubscribe=include_unsubscribe)
                 ok_c += 1
-                db().log_send(sender_row['id'], rule_id and int(rule_id), email, subj, 'sent', user_id=_uid2, username=_uname2)
+                if _sent_today_cache2 is not None:
+                    _sent_today_cache2[sender_row['id']] = _sent_today_cache2.get(sender_row['id'], 0) + 1
+                _log_buffer2.append({'sender_id': sender_row['id'], 'rule_id': rule_id and int(rule_id),
+                    'recipient': email, 'subject': subj, 'status': 'sent', 'error_msg': None,
+                    'message_id': _msg_id2, 'provider': _mode2, 'user_id': _uid2, 'username': _uname2})
+                if len(_log_buffer2) >= 50:
+                    _db_mod2.log_send_bulk(_log_buffer2); _log_buffer2.clear()
                 yield sse({'type':'progress','i':i,'total':total,'email':email,'status':'ok'})
             except Exception as e:
                 err_c += 1
-                db().log_send(sender_row['id'], rule_id and int(rule_id), email, subj, 'failed', str(e), user_id=_uid2, username=_uname2)
+                _log_buffer2.append({'sender_id': sender_row['id'], 'rule_id': rule_id and int(rule_id),
+                    'recipient': email, 'subject': subj, 'status': 'failed', 'error_msg': str(e),
+                    'message_id': None, 'provider': _mode2 if '_mode2' in dir() else None,
+                    'user_id': _uid2, 'username': _uname2})
+                if len(_log_buffer2) >= 50:
+                    _db_mod2.log_send_bulk(_log_buffer2); _log_buffer2.clear()
                 yield sse({'type':'progress','i':i,'total':total,'email':email,'status':'error','error':str(e)})
 
             yield from heartbeat_sleep(delay_ms)
 
+        if _log_buffer2:
+            _db_mod2.log_send_bulk(_log_buffer2); _log_buffer2.clear()
+        try:
+            _bulk_conn2.close()
+        except Exception:
+            pass
         db().audit(_uid2, _uname2, 'bulk_done', 'bulk', table_name,
                    detail=f"ok={ok_c} err={err_c} skipped={skip_c} total={total}",
                    ip_address=_ip2)
@@ -1290,14 +1579,7 @@ def add_suppression():
         emails = [e.strip() for e in emails.replace(';', ',').split(',') if e.strip()]
     if not emails:
         return jsonify({'success': False, 'message': 'En az bir e-posta gerekli.'})
-    added, skipped = 0, 0
-    for email in emails:
-        if '@' not in email:
-            skipped += 1
-            continue
-        ok = db().add_to_suppression(email.lower(), reason, source='manual')
-        if ok: added += 1
-        else:  skipped += 1
+    added, skipped = db().bulk_add_to_suppression(emails, reason, source='manual')
     _audit('suppression_add', 'suppression', None,
            detail=f"added={added} skipped={skipped} reason={reason}")
     return jsonify({
@@ -1503,6 +1785,13 @@ def api_template_list():
     return jsonify({'success': True, 'data': rows})
 
 
+@app.route('/api/templates/defaults', methods=['GET'])
+@login_required
+def api_template_defaults():
+    """Her tip için varsayılan şablonu döner: {'subject': {...}, 'body': {...}}"""
+    return jsonify({'success': True, 'data': db().template_get_defaults()})
+
+
 @app.route('/api/templates/create', methods=['POST'])
 @login_required
 def api_template_create():
@@ -1520,7 +1809,8 @@ def api_template_create():
     if not content:
         return jsonify({'success': False, 'message': 'İçerik boş olamaz.'})
 
-    ok, result = db().template_create(tpl_type, name, content)
+    is_default = bool(data.get('is_default', False))
+    ok, result = db().template_create(tpl_type, name, content, is_default=is_default)
     if ok:
         return jsonify({'success': True, 'id': result, 'message': 'Şablon kaydedildi.'})
     return jsonify({'success': False, 'message': result})
@@ -1541,10 +1831,12 @@ def api_template_get(tpl_id):
 def api_template_update(tpl_id):
     """Şablonu günceller."""
     data = request.json or {}
+    is_default = data.get('is_default')
     ok, msg = db().template_update(
         tpl_id,
-        name    = data.get('name'),
-        content = data.get('content')
+        name       = data.get('name'),
+        content    = data.get('content'),
+        is_default = bool(is_default) if is_default is not None else None
     )
     return jsonify({'success': ok, 'message': msg})
 
@@ -1605,9 +1897,9 @@ def api_user_update():
     if not uid:
         return jsonify({'success': False, 'message': 'uid gerekli.'})
     kwargs = {}
-    if data.get('email')     is not None: kwargs['email']     = data['email']
-    if data.get('role')      is not None: kwargs['role']      = data['role']
-    if data.get('is_active') is not None: kwargs['is_active'] = int(data['is_active'])
+    if data.get('email')              is not None: kwargs['email']              = data['email']
+    if data.get('role')               is not None: kwargs['role']               = data['role']
+    if data.get('is_active')          is not None: kwargs['is_active']          = int(data['is_active'])
     if data.get('password'):
         if len(data['password']) < 6:
             return jsonify({'success': False, 'message': 'Sifre en az 6 karakter olmali.'})
@@ -1723,6 +2015,14 @@ def queue_create_endpoint():
     batch_wait = int(request.form.get('batch_wait_min', 60))
     table_name = request.form.get('table_name', '').strip()
 
+    # Madde 5: A/B test parametreleri
+    subject_b     = request.form.get('subject_b', '').strip() or None
+    ab_test       = request.form.get('ab_test') == 'true' and bool(subject_b)
+    ab_ratio      = int(request.form.get('ab_ratio', 50))
+    # Madde 2: filtre parametreleri
+    filter_role       = request.form.get('filter_role', 'false') == 'true'
+    filter_disposable = request.form.get('filter_disposable', 'true') == 'true'
+
     if not all([sender_id, email_col, subject_tpl, body_tpl]):
         return jsonify({'success': False, 'message': 'Zorunlu alanlar eksik.'})
 
@@ -1752,6 +2052,8 @@ def queue_create_endpoint():
             source_table=table_name if source_type == 'db' else None,
             source_excel=source_excel,
             attachment_name=attachment_name, attachment_data=attachment_data,
+            subject_b=subject_b, ab_test=ab_test, ab_ratio=ab_ratio,
+            filter_role=filter_role, filter_disposable=filter_disposable,
         )
         return jsonify({'success': True, 'queue_id': qid,
                         'message': f'Görev kuyruğa eklendi (#{qid}). Worker en geç 5 dk içinde çalıştıracak.'})
@@ -1903,14 +2205,59 @@ def get_send_log_summary():
 @app.route('/api/send-log', methods=['GET'])
 @login_required
 def get_send_log():
-    """Gönderim geçmişini filtreli ve sayfalı döner."""
-    page = int(request.args.get('page', 1))
-    per_page = int(request.args.get('per_page', 50))
+    """Gönderim geçmişini filtreli ve sayfalı döner. export=csv ile tüm kayıtları CSV olarak indirir."""
+    page      = int(request.args.get('page', 1))
+    per_page  = int(request.args.get('per_page', 50))
     sender_id = request.args.get('sender_id')
-    status = request.args.get('status')
-    search = request.args.get('search')
-    
-    rows, total = db().get_send_log(page, per_page, sender_id, status, search)
+    status    = request.args.get('status')
+    search    = request.args.get('search')
+    export    = request.args.get('export')
+    date_from = request.args.get('date_from')  # 'YYYY-MM-DD'
+    date_to   = request.args.get('date_to')    # 'YYYY-MM-DD'
+
+    if export == 'csv':
+        # Filtrelerle eşleşen TÜM kayıtları çek (sayfalama yok)
+        rows, _ = db().get_send_log(page=1, per_page=999999, sender_id=sender_id, status=status, search=search, date_from=date_from, date_to=date_to)
+        import csv, io
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow(['Tarih', 'Gönderici', 'Servis', 'Alıcı', 'Konu', 'Durum', 'Kullanıcı', 'Hata'])
+        for r in rows:
+            sent_at = r['sent_at'].strftime('%d.%m.%Y %H:%M:%S') if isinstance(r.get('sent_at'), datetime.datetime) else str(r.get('sent_at',''))
+            # Servis adını belirle: provider varsa kullan, yoksa sender_mode + api_host'tan türet
+            provider  = r.get('provider', '') or ''
+            mode      = r.get('sender_mode', '') or ''
+            api_host  = r.get('api_host', '') or ''
+            if provider:
+                service = provider
+            elif mode == 'api' and api_host:
+                # api_host'tan servis adını çıkar: send.api.mailtrap.io -> Mailtrap
+                host_parts = api_host.replace('https://','').replace('http://','').split('.')
+                service = host_parts[-2].capitalize() if len(host_parts) >= 2 else api_host
+            elif mode:
+                service = mode.upper()
+            else:
+                service = ''
+            writer.writerow([
+                sent_at,
+                r.get('sender_name', ''),
+                service,
+                r.get('recipient', ''),
+                r.get('subject', ''),
+                r.get('status', ''),
+                r.get('sent_by_username', ''),
+                r.get('error_msg', '') or '',
+            ])
+        csv_bytes = output.getvalue().encode('utf-8-sig')  # utf-8-sig: Excel BOM desteği
+        from flask import Response
+        filename = f"gonderim-gecmisi-{datetime.datetime.now().strftime('%Y%m%d-%H%M')}.csv"
+        return Response(
+            csv_bytes,
+            mimetype='text/csv',
+            headers={'Content-Disposition': f'attachment; filename="{filename}"'}
+        )
+
+    rows, total = db().get_send_log(page, per_page, sender_id, status, search, date_from=date_from, date_to=date_to)
     for r in rows:
         if isinstance(r.get('sent_at'), datetime.datetime):
             r['sent_at'] = r['sent_at'].strftime('%d.%m.%Y %H:%M:%S')
@@ -1926,6 +2273,104 @@ def clear_send_log():
     sender_id = request.args.get('sender_id')  # opsiyonel: sadece belirli göndericinin logları
     ok, msg = db().clear_send_log(sender_id=int(sender_id) if sender_id else None)
     return jsonify({'success': ok, 'message': msg})
+
+
+@app.route('/api/send-log/retry-failed', methods=['POST'])
+@login_required
+@csrf_protect
+@rate_limit(5, 60)
+def retry_failed_sends():
+    """
+    Send-log'daki 'failed' kayıtları tekrar gönderir.
+
+    Parametreler (form veya JSON):
+      sender_id   — (zorunlu) hangi sender kullanılacak
+      log_ids     — (opsiyonel) virgülle ayrılmış log ID listesi; boşsa tüm failed kayıtlar
+      max_count   — (opsiyonel) maksimum kaç kayıt denensin (varsayılan: 500)
+
+    Akış: SSE (Server-Sent Events) — canlı ilerleme gönderir.
+    Her kayıt için: can_send kontrolü → gönderim → log güncelleme
+    """
+    data = request.get_json(silent=True) or {}
+    sender_id  = data.get('sender_id') or request.form.get('sender_id')
+    log_ids_raw = data.get('log_ids') or request.form.get('log_ids', '')
+    max_count  = int(data.get('max_count') or request.form.get('max_count') or 500)
+
+    if not sender_id:
+        return jsonify({'success': False, 'message': 'sender_id zorunlu'}), 400
+
+    sender_row = db().get_sender(int(sender_id))
+    if not sender_row:
+        return jsonify({'success': False, 'message': 'Gönderici bulunamadı'}), 404
+
+    # Hangi log kayıtları retry edilecek
+    log_ids = [int(x.strip()) for x in log_ids_raw.split(',') if x.strip().isdigit()] if log_ids_raw else []
+
+    # DB'den failed kayıtları al
+    failed_rows = db().get_failed_logs(log_ids=log_ids, limit=max_count)
+    if not failed_rows:
+        return jsonify({'success': False, 'message': 'Retry edilecek başarısız kayıt bulunamadı'}), 404
+
+    _uid   = session.get('user_id')
+    _uname = session.get('username', '')
+
+    def stream():
+        total  = len(failed_rows)
+        ok_c   = err_c = skip_c = 0
+
+        yield sse({'type': 'start', 'total': total})
+
+        for i, row in enumerate(failed_rows, 1):
+            email      = row['recipient']
+            subject    = row['subject'] or ''
+            log_id     = row['id']
+            rule_id    = row.get('rule_id')
+
+            # can_send kontrolü (suppression + günlük limit)
+            allowed, reason = db().can_send(sender_row['id'], email, 0, user_id=_uid)
+            if not allowed:
+                skip_c += 1
+                db().update_log_status(log_id, 'skipped', f'Retry atlandı: {reason}')
+                yield sse({'type': 'progress', 'i': i, 'total': total,
+                           'email': email, 'status': 'skipped', 'reason': reason})
+                continue
+
+            try:
+                # body_html DB'den al (send_log.body_html kolonu), yoksa subject fallback
+                body_html = row.get('body_html') or f'<p>{subject}</p>'
+
+                if sender_row.get('sender_mode') == 'ses':
+                    send_via_ses(sender_row, email, subject, body_html, include_unsubscribe=False)
+                elif sender_row.get('sender_mode') == 'api':
+                    send_via_api(sender_row, email, subject, body_html, include_unsubscribe=False)
+                else:
+                    ok_r, err_r = send_one(sender_row, email, subject, body_html, include_unsubscribe=False)
+                    if not ok_r:
+                        raise Exception(err_r)
+
+                ok_c += 1
+                db().update_log_status(log_id, 'sent', None)
+                db().log_send(sender_row['id'], rule_id, email, subject, 'sent',
+                              user_id=_uid, username=_uname)
+                yield sse({'type': 'progress', 'i': i, 'total': total,
+                           'email': email, 'status': 'ok'})
+
+            except Exception as e:
+                err_c += 1
+                db().update_log_status(log_id, 'failed', f'Retry hatası: {str(e)[:200]}')
+                yield sse({'type': 'progress', 'i': i, 'total': total,
+                           'email': email, 'status': 'error', 'error': str(e)})
+
+        yield sse({'type': 'done', 'ok': ok_c, 'err': err_c,
+                   'skipped': skip_c, 'total': total})
+
+    return Response(stream(),
+                    mimetype='text/event-stream',
+                    headers={
+                        'Cache-Control': 'no-cache, no-store, must-revalidate',
+                        'Pragma': 'no-cache',
+                        'X-Accel-Buffering': 'no',
+                    })
 
 # ─── E-posta Format ve MX Doğrulama ──────────────────────────────────────────
 _EMAIL_RE = re.compile(r'^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$')
@@ -1986,21 +2431,51 @@ def check_mx(domain: str, timeout: float = 1.0) -> bool:
     return result
 
 
-def is_valid_email_with_mx(email: str, use_mx: bool = False) -> tuple[bool, str]:
+def is_valid_email_with_mx(email: str, use_mx: bool = False,
+                           filter_role: bool = False,
+                           filter_disposable: bool = True,
+                           filter_catchall: bool = False) -> tuple[bool, str]:
     """
-    E-posta format kontrolü + isteğe bağlı MX sorgusu.
+    E-posta format + isteğe bağlı filtreler.
+
+    Parametreler:
+      use_mx            → Domain MX kaydı var mı? (DNS sorgusu)
+      filter_role       → info@, admin@, noreply@ gibi rol adreslerini ele
+      filter_disposable → mailinator, tempmail gibi geçici domainleri ele (varsayılan: aktif)
+      filter_catchall   → Catch-all domain tespiti — SMTP probe, yavaş (varsayılan: kapalı)
 
     Dönen değer: (geçerli_mi, hata_sebebi)
-      (True,  '')                        → geçerli
-      (False, 'Geçersiz e-posta formatı') → format hatası
-      (False, 'MX kaydı yok: domain.com') → domain mail alamıyor
+      (True,  '')                                       → geçerli
+      (False, 'Geçersiz e-posta formatı')               → format hatası
+      (False, 'Geçici e-posta domain\'i: domain.com') → disposable
+      (False, 'Rol adresi (kişisel değil): info@')      → rol adresi
+      (False, 'MX kaydı yok: domain.com')               → MX yok
+      (False, 'Catch-all domain: domain.com')            → catch-all
     """
     if not is_valid_email(email):
         return False, 'Geçersiz e-posta formatı'
+
+    domain = email.rsplit('@', 1)[1].lower()
+
+    # Disposable domain — hızlı, liste bazlı, MX'ten önce
+    if filter_disposable and is_disposable(email):
+        return False, f"Geçici e-posta domain\'i: {domain}"
+
+    # Rol adresi
+    if filter_role and is_role_based(email):
+        local = email.split('@')[0]
+        return False, f'Rol adresi (kişisel değil): {local}@'
+
+    # MX kaydı
     if use_mx:
-        domain = email.rsplit('@', 1)[1].lower()
         if not check_mx(domain):
             return False, f'MX kaydı yok: {domain}'
+
+    # Catch-all — en yavaş, SMTP probe, en sona
+    if filter_catchall and use_mx:
+        if is_catchall_domain(domain):
+            return False, f'Catch-all domain (doğrulama yapılamıyor): {domain}'
+
     return True, ''
 
 
@@ -2011,9 +2486,178 @@ _ROLE_PREFIXES = {
     'contact', 'sales', 'marketing', 'billing', 'accounts',
     'postmaster', 'webmaster', 'hostmaster', 'abuse',
     'newsletter', 'mail', 'email', 'office', 'reception',
+    'hello', 'team', 'hr', 'jobs', 'careers', 'press', 'media',
+    'privacy', 'legal', 'security', 'it', 'tech', 'ops', 'devops',
+    'feedback', 'inquiry', 'enquiry', 'orders', 'returns', 'service',
+    'services', 'general', 'connect', 'partnerships', 'partner',
 }
 
-# check_mx — yukarıda tanımlıdır (satır ~1793)
+# Geçici/disposable e-posta domain'leri — bu domainler gerçek kullanıcı değil
+_DISPOSABLE_DOMAINS = {
+    'mailinator.com', 'guerrillamail.com', 'guerrillamail.net', 'guerrillamail.org',
+    'tempmail.com', 'temp-mail.org', 'throwaway.email', 'sharklasers.com',
+    'guerrillamailblock.com', 'grr.la', 'guerrillamail.info', 'spam4.me',
+    'trashmail.com', 'trashmail.me', 'trashmail.net', 'trashmail.at',
+    'trashmail.io', 'trashmail.xyz', 'dispostable.com', 'yopmail.com',
+    'yopmail.fr', 'cool.fr.nf', 'jetable.fr.nf', 'nospam.ze.tc',
+    'nomail.xl.cx', 'mega.zik.dj', 'speed.1s.fr', 'courriel.fr.nf',
+    'moncourrier.fr.nf', 'monemail.fr.nf', 'monmail.fr.nf',
+    'spamgourmet.com', 'spamgourmet.net', 'spamgourmet.org',
+    'spamex.com', 'spamfree24.org', 'spamhole.com', 'spamify.com',
+    'spaml.de', 'spammotel.com', 'spamobox.com', 'spamspot.com',
+    'spamthis.co.uk', 'spamtroll.net', 'tempr.email', 'discard.email',
+    'fakeinbox.com', 'mailnull.com', 'maildrop.cc', 'mailnesia.com',
+    'mailnull.com', 'spamgob.com', 'binkmail.com', 'bob.email',
+    'drdrb.com', 'emkei.cz', 'gowikimail.com', 'haltospam.com',
+    'inoutmail.de', 'inoutmail.eu', 'inoutmail.info', 'inoutmail.net',
+    'jetable.com', 'jetable.net', 'jetable.org', 'kasmail.com',
+    'klassmaster.com', 'klassmaster.net', 'lhsdv.com', 'loadaveragezero.com',
+    'mailblocks.com', 'mailcatch.com', 'maileater.com', 'mailexpire.com',
+    'mailfreeonline.com', 'mailguard.me', 'mailin8r.com', 'mailinater.com',
+    'mailincubator.com', 'mailme.lv', 'mailme24.com', 'mailmetrash.com',
+    'mailmoat.com', 'mailnew.com', 'mailnull.com', 'mailsiphon.com',
+    'mailslite.com', 'mailtemp.info', 'mailtome.de', 'mailtothis.com',
+    'mailtrash.net', 'mailzilla.org', 'mbx.cc', 'meltmail.com',
+    'mierdamail.com', 'mintemail.com', 'misterpinball.de', 'mt2009.com',
+    'mx0.wwwnew.eu', 'mycleaninbox.net', 'myphantomemail.com', 'myscrapthat.com',
+    'netmails.com', 'netmails.net', 'neverbox.com', 'nice-4u.com',
+    'nincsmail.hu', 'nobulk.com', 'noclickemail.com', 'nogmailspam.info',
+    'nomail.pw', 'nomail.xl.cx', 'nomail2me.com', 'nomorespamemails.com',
+    'nonspam.eu', 'nonspammer.de', 'noref.in', 'nospam.ze.tc',
+    'nospamfor.us', 'nospammail.net', 'nospamthanks.info', 'notmailinator.com',
+    'nowmymail.com', 'objectmail.com', 'obobbo.com', 'odnorazovoe.ru',
+    'oneoffemail.com', 'onewaymail.com', 'online.ms', 'oopi.org',
+    'opentrash.com', 'ordinaryamerican.net', 'owlpic.com', 'pancakemail.com',
+    'pookmail.com', 'privacy.net', 'proxymail.eu', 'prtnx.com',
+    'punkass.com', 'putthisinyourspamdatabase.com', 'qq.com',
+    'quickinbox.com', 'rcpt.at', 'recode.me', 'recursor.net',
+    'regbypass.com', 'regbypass.comsafe-mail.net', 'rejectmail.com',
+    'rklips.com', 'rmqkr.net', 'royal.net', 'rppkn.com',
+    'rtrtr.com', 's0ny.net', 'safe-mail.net', 'safetymail.info',
+    'safetypost.de', 'sandelf.de', 'saynotospams.com', 'selfdestructingmail.com',
+    'sendspamhere.com', 'sharklasers.com', 'shieldedmail.com', 'shiftmail.com',
+    'shit2.me', 'shitmail.me', 'shitmail.org', 'shitware.nl',
+    'shmeriously.com', 'shortmail.net', 'sibmail.com', 'skeefmail.com',
+    'slapsfromlastnight.com', 'slaskpost.se', 'slopsbox.com', 'smellfear.com',
+    'smwg.info', 'snakemail.com', 'sneakemail.com', 'sneakmail.de',
+    'snkmail.com', 'sofimail.com', 'sogetthis.com', 'soodonims.com',
+    'spam.la', 'spam.su', 'spamavert.com', 'spambob.com',
+    'spambob.net', 'spambob.org', 'spambog.com', 'spambog.de',
+    'spambog.ru', 'spambox.info', 'spambox.irishspringrealty.com',
+    'spambox.us', 'spamcannon.com', 'spamcannon.net', 'spamcero.com',
+    'spamcon.org', 'spamcorptastic.com', 'spamcowboy.com', 'spamcowboy.net',
+    'spamcowboy.org', 'spamday.com', 'spamex.com', 'spamfree.eu',
+    'spamfree24.de', 'spamfree24.eu', 'spamfree24.info', 'spamfree24.net',
+    'tempinbox.com', 'tempinbox.co.uk', 'tempomail.fr', 'temporaryemail.net',
+    'temporaryforwarding.com', 'temporaryinbox.com', 'temporarymail.org',
+    'tempthe.net', 'thankyou2010.com', 'thecloudindex.com',
+    'throam.com', 'throwam.com', 'throwmail.me', 'tilien.com',
+    'tmail.com', 'tmailinator.com', 'toiea.com', 'trashdevil.com',
+    'trashdevil.de', 'trashemail.de', 'trashmail.org', 'trashmailer.com',
+    'trashtimail.com', 'trillianpro.com', 'twinmail.de', 'tyldd.com',
+    'uggsrock.com', 'uroid.com', 'us.af', 'venompen.com',
+    'veryrealemail.com', 'viditag.com', 'viewcastmedia.com', 'viewcastmedia.net',
+    'viewcastmedia.org', 'walkmail.net', 'walkmail.ru', 'webemail.me',
+    'webm4il.info', 'wegwerfmail.de', 'wegwerfmail.net', 'wegwerfmail.org',
+    'whatiaas.com', 'whatifnot.com', 'whopy.com', 'wilemail.com',
+    'wmail.cf', 'writeme.us', 'wronghead.com', 'wuzupmail.net',
+    'xagloo.com', 'xemaps.com', 'xents.com', 'xmaily.com',
+    'xoxy.net', 'xyzfree.net', 'yapped.net', 'yeah.net',
+    'yepmail.net', 'yogamaven.com', 'yopmail.com', 'yopmail.fr',
+    'youmail.ga', 'yourdomain.com', 'ypmail.webarnak.fr.eu.org',
+    'yuurok.com', 'z1p.biz', 'za.com', 'zebins.com',
+    'zebins.eu', 'zehnminuten.de', 'zippymail.info', 'zoemail.net',
+    'zoemail.org', 'zomg.info', 'zxcv.com', 'zxcvbnm.com',
+}
+
+# Catch-all domain tespiti için SMTP probe cache
+# {domain: (is_catchall: bool, timestamp: float)}
+_catchall_cache: dict = {}
+_catchall_lock = __import__('threading').Lock()
+_MAX_CATCHALL_CACHE = 10_000
+
+def is_catchall_domain(domain: str, timeout: float = 3.0) -> bool:
+    """
+    Domain'in catch-all olup olmadığını tespit eder.
+
+    Yöntem: Var olamayacak kadar rastgele bir adrese SMTP probe atar.
+    Sunucu "250 OK" derse → catch-all (her adresi kabul ediyor).
+    Sunucu "550 No such user" derse → catch-all değil.
+
+    Cache: 10.000 domain'e kadar bellekte tutulur.
+    Hata durumunda False döner (gönderimine izin ver, false negative tercih).
+
+    UYARI: Bazı sunucular probe'u engeller veya greylisting yapar.
+    Bu durumda False dönülür — gönderim kesilmez.
+    """
+    import socket, time as _time
+    domain = domain.strip().lower()
+
+    with _catchall_lock:
+        cached = _catchall_cache.get(domain)
+        if cached is not None:
+            is_ca, ts = cached
+            # 24 saat cache geçerliliği
+            if _time.time() - ts < 86400:
+                return is_ca
+        if len(_catchall_cache) >= _MAX_CATCHALL_CACHE:
+            _catchall_cache.clear()
+
+    # Var olamayacak rastgele adres üret
+    import random, string
+    rand_local = ''.join(random.choices(string.ascii_lowercase + string.digits, k=20))
+    probe_addr = f"{rand_local}@{domain}"
+
+    is_catchall = False
+    try:
+        # MX'i bul
+        try:
+            import dns.resolver
+            mx_records = dns.resolver.resolve(domain, 'MX', lifetime=timeout)
+            mx_host = str(sorted(mx_records, key=lambda r: r.preference)[0].exchange).rstrip('.')
+        except Exception:
+            # DNS yoksa veya hata varsa catch-all değil say
+            with _catchall_lock:
+                _catchall_cache[domain] = (False, _time.time())
+            return False
+
+        # SMTP bağlantısı
+        sock = socket.create_connection((mx_host, 25), timeout=timeout)
+        sock.settimeout(timeout)
+        f = sock.makefile('rb')
+
+        def recv():
+            lines = []
+            while True:
+                line = f.readline(512).decode('utf-8', errors='replace').strip()
+                lines.append(line)
+                if len(line) >= 4 and line[3] == ' ':
+                    break
+            return lines[-1][:3], '\n'.join(lines)
+
+        recv()  # 220 banner
+        sock.sendall(b'EHLO mailcheck.local\r\n')
+        recv()
+        sock.sendall(b'MAIL FROM:<check@mailcheck.local>\r\n')
+        recv()
+        sock.sendall(f'RCPT TO:<{probe_addr}>\r\n'.encode())
+        code, _ = recv()
+        sock.sendall(b'QUIT\r\n')
+        sock.close()
+
+        # 250 veya 251 → sunucu adresi kabul etti → catch-all
+        is_catchall = code.startswith('2')
+
+    except Exception:
+        is_catchall = False  # Bağlanamazsa catch-all değil say
+
+    with _catchall_lock:
+        _catchall_cache[domain] = (is_catchall, _time.time())
+
+    return is_catchall
+
+
+# check_mx — yukarıda tanımlıdır
 
 
 def is_role_based(email: str) -> bool:
@@ -2025,6 +2669,17 @@ def is_role_based(email: str) -> bool:
         return False
     local = email.split('@')[0].lower().strip()
     return local in _ROLE_PREFIXES
+
+
+def is_disposable(email: str) -> bool:
+    """
+    Geçici/disposable e-posta domain'i mi kontrol eder.
+    mailinator, tempmail, yopmail gibi domainler gerçek kullanıcı değil.
+    """
+    if '@' not in email:
+        return False
+    domain = email.rsplit('@', 1)[1].lower().strip()
+    return domain in _DISPOSABLE_DOMAINS
 
 def is_valid_email(email: str) -> bool:
     """
@@ -2204,6 +2859,88 @@ def auto_migrate():
 #  E-POSTA DOĞRULAMA (Liste Temizleme) ENDPOINTLERİ
 # ══════════════════════════════════════════════════════════════════════
 
+@app.route('/settings/audit-log')
+@login_required
+def settings_audit_log():
+    """Audit log görüntüleme sayfası — sadece admin erişebilir."""
+    if current_user.role != 'admin':
+        return redirect(url_for('index'))
+    return render_template('pages/settings/audit-log.html', active_tab='audit_log')
+
+
+@app.route('/api/audit-log', methods=['GET'])
+@login_required
+def api_audit_log():
+    """
+    Audit log kayıtlarını filtreli ve sayfalı döner.
+    Sadece admin erişebilir.
+    Query parametreleri: page, per_page, username, action, date_from, date_to, export
+    """
+    if current_user.role != 'admin':
+        return jsonify({'success': False, 'message': 'Yetkisiz erişim.'}), 403
+
+    page      = int(request.args.get('page', 1))
+    per_page  = int(request.args.get('per_page', 50))
+    username  = request.args.get('username', '').strip() or None
+    action    = request.args.get('action', '').strip() or None
+    date_from = request.args.get('date_from', '').strip() or None
+    date_to   = request.args.get('date_to', '').strip() or None
+    export    = request.args.get('export', '').strip()
+
+    rows, total = db().get_audit_log(
+        page=page, per_page=per_page,
+        username=username, action=action,
+        date_from=date_from, date_to=date_to
+    )
+
+    if export == 'csv':
+        import csv, io
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow(['Tarih', 'Kullanıcı', 'İşlem', 'Hedef Tip', 'Hedef ID', 'Detay', 'IP'])
+        # CSV için tüm kayıtları çek
+        all_rows, _ = db().get_audit_log(
+            page=1, per_page=999999,
+            username=username, action=action,
+            date_from=date_from, date_to=date_to
+        )
+        for r in all_rows:
+            writer.writerow([
+                r.get('created_at', ''),
+                r.get('username', ''),
+                r.get('action', ''),
+                r.get('target_type', ''),
+                r.get('target_id', ''),
+                r.get('detail', ''),
+                r.get('ip_address', ''),
+            ])
+        csv_bytes = output.getvalue().encode('utf-8-sig')
+        from flask import Response as _Resp
+        fname = f"audit-log-{datetime.datetime.now().strftime('%Y%m%d-%H%M')}.csv"
+        return _Resp(
+            csv_bytes,
+            mimetype='text/csv',
+            headers={'Content-Disposition': f'attachment; filename="{fname}"'}
+        )
+
+    return jsonify({
+        'success': True,
+        'data':    rows,
+        'total':   total,
+        'page':    page,
+    })
+
+
+@app.route('/api/audit-log/actions', methods=['GET'])
+@login_required
+def api_audit_log_actions():
+    """Audit log'daki benzersiz action tiplerini döner (filtre dropdown için)."""
+    if current_user.role != 'admin':
+        return jsonify({'success': False, 'message': 'Yetkisiz erişim.'}), 403
+    actions = db().get_audit_log_actions()
+    return jsonify({'success': True, 'data': actions})
+
+
 @app.route('/settings/help')
 @login_required
 def settings_help():
@@ -2350,6 +3087,216 @@ def api_verify_export_clean():
         return jsonify({'success': False, 'message': f'Sunucu hatası: {str(e)}'})
 
 
+@app.route('/api/verify/export-csv', methods=['GET'])
+@login_required
+@rate_limit(10, 60)
+def api_verify_export_csv():
+    """
+    Doğrulama sonuçlarını segmente göre CSV olarak indirir.
+
+    Query parametreleri:
+        table    (zorunlu)  — Kaynak tablo adı
+        segment  (opsiyonel, varsayılan 'valid') — İndirilecek segment:
+                  valid        → is_valid=1 (geçerli)
+                  invalid      → is_valid=0 (geçersiz)
+                  unknown      → is_valid=-1 (belirsiz/riskli)
+                  risky        → is_valid IN (1,-1) (geçerli+riskli)
+                  all          → tüm satırlar
+                  catch_all    → status='catch_all'
+                  spam_trap    → status='spam_trap'
+                  no_infra     → status='no_infra'
+                  role_account → status='role_account'
+                  typo_fixed   → status='typo_fixed'
+                  do_not_send  → risk_label='do_not_send'
+                  high_risk    → risk_label IN ('high_risk','do_not_send')
+        limit    (opsiyonel, varsayılan 500000) — Max satır sayısı
+    """
+    import csv, io
+    from flask import Response
+    from security import safe_identifier
+    import database as _db_module
+
+    table_name = request.args.get('table', '').strip()
+    segment    = request.args.get('segment', 'valid').strip().lower()
+    try:
+        limit  = min(int(request.args.get('limit', 500000)), 1000000)
+    except ValueError:
+        limit  = 500000
+
+    if not table_name:
+        return jsonify({'success': False, 'message': 'Tablo adı zorunludur.'})
+    try:
+        safe_identifier(table_name)
+    except ValueError as e:
+        return jsonify({'success': False, 'message': str(e)})
+
+    # Segment → WHERE koşulu eşlemesi
+    # is_valid kolonu her zaman var; status/risk_label kolonları yoksa
+    # o filtreler boş sonuç döner (hata değil)
+    SEGMENT_WHERE = {
+        'valid':        "is_valid = 1",
+        'invalid':      "is_valid = 0",
+        'unknown':      "is_valid = -1",
+        'risky':        "is_valid IN (1, -1)",
+        'all':          None,   # WHERE yok
+        'catch_all':    "status = 'catch_all'",
+        'spam_trap':    "status = 'spam_trap'",
+        'no_infra':     "status = 'no_infra'",
+        'role_account': "status = 'role_account'",
+        'typo_fixed':   "status = 'typo_fixed'",
+        'do_not_send':  "risk_label = 'do_not_send'",
+        'high_risk':    "risk_label IN ('high_risk', 'do_not_send')",
+    }
+
+    if segment not in SEGMENT_WHERE:
+        return jsonify({
+            'success': False,
+            'message': f"Geçersiz segment. Kabul edilenler: {', '.join(SEGMENT_WHERE.keys())}"
+        }), 400
+
+    where_cond = SEGMENT_WHERE[segment]
+
+    conn = _db_module.get_connection()
+    try:
+        with conn.cursor() as cur:
+            # Tablodaki kolonları kontrol et — filtre kolonları olmayabilir
+            db_name = _db_module.get_db_config()['database']
+            cur.execute(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_schema=%s AND table_name=%s",
+                (db_name, table_name)
+            )
+            existing_cols = {r['column_name'] for r in cur.fetchall()}
+
+            # is_valid / status / risk_label kolonu yoksa where'i düşür
+            if where_cond:
+                needs_is_valid   = 'is_valid'   in where_cond and 'is_valid'   not in existing_cols
+                needs_status     = 'status'      in where_cond and 'status'     not in existing_cols
+                needs_risk_label = 'risk_label'  in where_cond and 'risk_label' not in existing_cols
+                if needs_is_valid or needs_status or needs_risk_label:
+                    where_cond = None   # kolon yok, filtre uygulanamaz
+
+            where_sql = f"WHERE {where_cond}" if where_cond else ""
+            cur.execute(
+                f"SELECT * FROM `{table_name}` {where_sql} ORDER BY 1 LIMIT %s",
+                (limit,)
+            )
+            rows = cur.fetchall()
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'Tablo okunamadı: {e}'})
+    finally:
+        conn.close()
+
+    if not rows:
+        return jsonify({'success': False, 'message': 'Bu segment için kayıt bulunamadı.'})
+
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=rows[0].keys())
+    writer.writeheader()
+    for r in rows:
+        row_out = {}
+        for k, v in r.items():
+            if isinstance(v, datetime.datetime):
+                row_out[k] = v.strftime('%d.%m.%Y %H:%M:%S')
+            else:
+                row_out[k] = v
+        writer.writerow(row_out)
+
+    csv_bytes = output.getvalue().encode('utf-8-sig')
+    filename = (
+        f"{table_name}-{segment}-"
+        f"{datetime.datetime.now().strftime('%Y%m%d-%H%M')}.csv"
+    )
+    return Response(
+        csv_bytes,
+        mimetype='text/csv',
+        headers={
+            'Content-Disposition': f'attachment; filename="{filename}"',
+            'X-Total-Rows': str(len(rows)),
+            'X-Segment':    segment,
+        }
+    )
+
+
+@app.route('/api/verify/verified-tables', methods=['GET'])
+@login_required
+def api_get_verified_tables():
+    """Prefix ile eslesen kullanici tablolarini ve istatistiklerini doner."""
+    prefix = request.args.get('prefix', 'mail_list_')
+    ok, result = db().get_verified_tables(prefix=prefix)
+    return jsonify({
+        'success': ok,
+        'data': result if ok else [],
+        'message': '' if ok else result,
+        'debug_prefix': prefix,
+        'debug_count': len(result) if ok else 0,
+    })
+
+
+@app.route('/api/verify/merge', methods=['POST'])
+@login_required
+@csrf_protect
+@rate_limit(5, 60)
+def api_merge_verified():
+    """
+    Secilen dogrulanmis tablolari ayri hedef tablolara birlestir.
+    target_valid : is_valid=1 adreslerin yazilacagi tablo (zorunlu)
+    target_risky : is_valid=-1 adreslerin yazilacagi tablo (opsiyonel)
+    """
+    data          = request.json or {}
+    target_valid  = data.get('target_valid', '').strip()
+    target_risky  = data.get('target_risky', '').strip() or None
+    source_tables = data.get('source_tables', [])
+
+    if not target_valid:
+        return jsonify({'success': False, 'message': 'Geçerli adresler için hedef tablo adı zorunludur.'})
+    if not source_tables:
+        return jsonify({'success': False, 'message': 'En az bir kaynak tablo seçilmelidir.'})
+
+    ok, result = db().merge_verified_tables(target_valid, source_tables, target_risky=target_risky)
+    if not ok:
+        return jsonify({'success': False, 'message': str(result)})
+
+    _audit('verify_merge', 'verify', None,
+           detail=f"valid={target_valid} risky={target_risky} sources={source_tables} "
+                  f"v_ins={result['valid_inserted']} r_ins={result['risky_inserted']}")
+
+    parts = [f"✓ Geçerli → '{target_valid}': {result['valid_inserted']:,} eklendi, {result['valid_skipped']:,} tekrar atlandı"]
+    if target_risky:
+        parts.append(f"⚠ Riskli → '{target_risky}': {result['risky_inserted']:,} eklendi, {result['risky_skipped']:,} tekrar atlandı")
+    if result.get('skipped_tables'):
+        parts.append(f"⏭ Email kolonu bulunamayan tablolar: {', '.join(result['skipped_tables'])}")
+
+    return jsonify({'success': True, 'message': ' | '.join(parts), 'result': result})
+
+
+@app.route('/api/verify/drop-tables', methods=['POST'])
+@login_required
+@admin_required
+@csrf_protect
+@rate_limit(5, 60)
+def api_drop_user_tables():
+    """Secilen kullanici tablolarini siler. Sistem tablolari korunur."""
+    data   = request.json or {}
+    tables = data.get('tables', [])
+    if not tables:
+        return jsonify({'success': False, 'message': 'Silinecek tablo seçilmedi.'})
+
+    ok, result = db().drop_user_tables(tables)
+    if not ok:
+        return jsonify({'success': False, 'message': str(result)})
+
+    _audit('drop_tables', 'db', None,
+           detail=f"dropped={result['dropped']} protected={result['protected']}")
+
+    parts = []
+    if result['dropped']:
+        parts.append(f"{len(result['dropped'])} tablo silindi: {', '.join(result['dropped'])}")
+    if result['protected']:
+        parts.append(f"{len(result['protected'])} tablo korundu (sistem): {', '.join(result['protected'])}")
+    return jsonify({'success': True, 'message': ' | '.join(parts), 'result': result})
+
+
 @app.route('/api/verify/reset-stuck', methods=['POST'])
 @login_required
 def api_verify_reset_stuck():
@@ -2377,6 +3324,27 @@ def api_verify_reset_stuck():
         return jsonify({'success': False, 'message': str(e)})
     return jsonify({'success': True, 'message': 'İptal edildi. Worker bir sonraki döngüde durduracak.'})
 
+
+@app.route('/api/verify/disposable-status', methods=['GET'])
+@login_required
+def api_verify_disposable_status():
+    try:
+        import disposable_updater as du, datetime
+        ts = du._get_last_update_ts()
+        cnt = len(du.load_domains_from_db())
+        last = datetime.datetime.fromtimestamp(ts).strftime('%d.%m.%Y %H:%M') if ts > 0 else 'Hiç güncellenmedi'
+        return jsonify({'success': True, 'last_update': last, 'count': cnt})
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)})
+
+@app.route('/api/verify/disposable-update', methods=['POST'])
+@login_required
+def api_verify_disposable_update():
+    try:
+        import disposable_updater as du
+        return jsonify(du.update_disposable_domains(force=True))
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)})
 
 @app.route('/api/verify/smtp-skip', methods=['GET'])
 @login_required
@@ -2418,6 +3386,255 @@ def api_verify_job_detail(job_id):
     if not j:
         return jsonify({'success': False, 'message': 'İş bulunamadı.'})
     return jsonify({'success': True, 'data': j})
+
+
+@app.route('/api/verify/single', methods=['GET'])
+@login_required
+def api_verify_single():
+    """
+    Tek bir e-postayı gerçek zamanlı doğrular.
+
+    Query parametreleri:
+        email   (zorunlu) — Doğrulanacak e-posta adresi
+        mode    (opsiyonel, varsayılan 'mx') — 'format' | 'mx' | 'smtp'
+
+    Yanıt alanları:
+        email          — Normalize edilmiş (düzeltilmiş) adres
+        original       — Kullanıcının girdiği orijinal adres
+        status         — Doğrulama statüsü (valid, invalid, catch_all vb.)
+        is_valid       — 1 (geçerli) | 0 (geçersiz) | -1 (belirsiz/riskli)
+        did_you_mean   — Yazım hatası önerisi (ör: "john@gmail.com") veya null
+        is_role        — Rol adresi mi? (info@, admin@ vb.)
+        is_free        — Ücretsiz sağlayıcı mı? (Gmail, Hotmail vb.)
+        is_catchall    — Catch-all sunucu mu?
+        has_spf        — SPF kaydı var mı?
+        has_dmarc      — DMARC kaydı var mı?
+        risk_score     — 0-100 arası teslimat risk skoru
+        risk_label     — safe | low_risk | medium_risk | high_risk | do_not_send
+        executiontime  — İşlem süresi (saniye, 2 ondalık)
+    """
+    import time as _time
+    from verifier import verify_one, STATUS_TO_IS_VALID
+    from risk_score import calculate_risk_score
+
+    email_param = (request.args.get('email') or '').strip()
+    mode        = (request.args.get('mode') or 'mx').strip().lower()
+
+    if not email_param:
+        return jsonify({
+            'success': False,
+            'error':   'email parametresi zorunludur.',
+            'code':    'missing_email',
+        }), 400
+
+    if mode not in ('format', 'mx', 'smtp'):
+        return jsonify({
+            'success': False,
+            'error':   'mode değeri format | mx | smtp olmalıdır.',
+            'code':    'invalid_mode',
+        }), 400
+
+    t_start = _time.perf_counter()
+    try:
+        final_email, status, meta = verify_one(email_param, mode=mode)
+        risk = calculate_risk_score(final_email, status, meta,
+                                    include_db=(mode == 'smtp'))
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error':   f'Doğrulama hatası: {e}',
+            'code':    'internal_error',
+        }), 500
+
+    elapsed = round(_time.perf_counter() - t_start, 2)
+
+    return jsonify({
+        'success':       True,
+        'email':         final_email,
+        'original':      meta.get('original', email_param),
+        'status':        status,
+        'is_valid':      STATUS_TO_IS_VALID.get(status, -1),
+        'did_you_mean':  meta.get('did_you_mean'),       # null veya "user@gmail.com"
+        'is_role':       bool(meta.get('is_role')),
+        'is_free':       bool(meta.get('is_free')),
+        'is_catchall':   bool(meta.get('is_catchall')),
+        'has_spf':       bool(meta.get('has_spf')),
+        'has_dmarc':     bool(meta.get('has_dmarc')),
+        'domain_age':    meta.get('domain_age'),
+        'spam_trap':     meta.get('spam_trap_type'),      # null veya tuzak tipi
+        'risk_score':    risk['score'],
+        'risk_label':    risk['label'],
+        'risk_label_tr': risk['label_tr'],
+        'send_recommended': risk['send_recommended'],
+        'executiontime': elapsed,
+    })
+
+# ══════════════════════════════════════════════════════════════════════
+#  OTOMATİK YENİDEN DOĞRULAMA ZAMANLAMA API'SI
+# ══════════════════════════════════════════════════════════════════════
+
+@app.route('/api/verify/schedules', methods=['GET'])
+@login_required
+def api_reverify_schedule_list():
+    """Tüm otomatik yeniden doğrulama zamanlamalarını döner."""
+    from auto_reverify import list_schedules
+    return jsonify({'success': True, 'data': list_schedules()})
+
+
+@app.route('/api/verify/schedules', methods=['POST'])
+@login_required
+def api_reverify_schedule_create():
+    """
+    Yeni zamanlama oluşturur veya mevcutu günceller.
+
+    Body (JSON):
+        table_name    (zorunlu)
+        email_col     (varsayılan: 'email')
+        mode          (varsayılan: 'mx')       — format | mx | smtp
+        threads       (varsayılan: 10)
+        interval_days (varsayılan: 90)         — 1-365 arası
+        target        (varsayılan: 'all')      — all | valid_only | invalid_only | unknown_only
+        start_now     (varsayılan: false)      — true ise ilk çalışma hemen
+    """
+    from auto_reverify import create_schedule
+    data = request.json or {}
+
+    table_name = (data.get('table_name') or '').strip()
+    if not table_name:
+        return jsonify({'success': False, 'message': 'table_name zorunludur.'}), 400
+
+    ok, result = create_schedule(
+        table_name    = table_name,
+        email_col     = (data.get('email_col') or 'email').strip(),
+        mode          = (data.get('mode') or 'mx').strip(),
+        threads       = int(data.get('threads') or 10),
+        interval_days = int(data.get('interval_days') or 90),
+        target        = (data.get('target') or 'all').strip(),
+        user_id       = g.user['id'],
+        username      = g.user['username'],
+        start_now     = bool(data.get('start_now', False)),
+    )
+    if not ok:
+        return jsonify({'success': False, 'message': result}), 400
+    return jsonify({'success': True, 'schedule_id': result})
+
+
+@app.route('/api/verify/schedules/<int:schedule_id>', methods=['DELETE'])
+@login_required
+def api_reverify_schedule_delete(schedule_id):
+    """Zamanlamayı siler."""
+    from auto_reverify import delete_schedule
+    ok = delete_schedule(schedule_id)
+    return jsonify({'success': ok})
+
+
+@app.route('/api/verify/schedules/<int:schedule_id>/toggle', methods=['POST'])
+@login_required
+def api_reverify_schedule_toggle(schedule_id):
+    """Zamanlamayı aktif/pasif yapar."""
+    from auto_reverify import toggle_schedule
+    data      = request.json or {}
+    is_active = bool(data.get('is_active', True))
+    ok        = toggle_schedule(schedule_id, is_active)
+    return jsonify({'success': ok})
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  DNSBL / RBL IP KARA LİSTE KONTROLÜ
+# ══════════════════════════════════════════════════════════════════════
+
+@app.route('/api/senders/dnsbl-check', methods=['POST'])
+@login_required
+@rate_limit(5, 60)   # Dakikada 5 istek — DNS sorguları ağır
+def api_dnsbl_check():
+    """
+    Bir SMTP sunucusunu / IP adresini DNSBL kara listelerinde kontrol eder.
+
+    Body (JSON) — birini gönderin:
+        smtp_host  — SMTP hostname (ör: 'mail.example.com')
+        ip         — Direkt IPv4 adresi (ör: '1.2.3.4')
+        sender_id  — Mevcut gönderici ID'si (smtp_server otomatik alınır)
+
+    Yanıt:
+        ip, listed, hits, severity, checked_at
+    """
+    from dnsbl_check import check_ip, check_smtp_host, check_sender_row, summarize
+    import database as _db_module
+
+    data      = request.json or {}
+    smtp_host = (data.get('smtp_host') or '').strip()
+    ip_addr   = (data.get('ip') or '').strip()
+    sender_id = data.get('sender_id')
+
+    # sender_id verilmişse smtp_server'ı DB'den al
+    if sender_id and not smtp_host and not ip_addr:
+        sender = _db_module.get_sender(int(sender_id))
+        if not sender:
+            return jsonify({'success': False, 'message': 'Gönderici bulunamadı.'}), 404
+        result = check_sender_row(sender)
+        if result is None:
+            return jsonify({'success': False,
+                            'message': 'Bu gönderici için SMTP sunucusu tanımlı değil.'}), 400
+    elif smtp_host:
+        result = check_smtp_host(smtp_host)
+    elif ip_addr:
+        result = check_ip(ip_addr)
+    else:
+        return jsonify({
+            'success': False,
+            'message': 'smtp_host, ip veya sender_id alanlarından biri zorunludur.',
+        }), 400
+
+    # Sonucu loglayalım
+    summary = summarize(result)
+    print(f"[DNSBL] {summary}")
+
+    return jsonify({'success': True, 'data': result})
+
+
+@app.route('/api/senders/<int:sender_id>/dnsbl', methods=['GET'])
+@login_required
+@rate_limit(5, 60)
+def api_sender_dnsbl(sender_id):
+    """
+    Belirli bir gönderici SMTP sunucusunun DNSBL durumunu döner.
+    GET /api/senders/3/dnsbl
+    """
+    from dnsbl_check import check_sender_row, summarize
+    import database as _db_module
+
+    sender = _db_module.get_sender(sender_id)
+    if not sender:
+        return jsonify({'success': False, 'message': 'Gönderici bulunamadı.'}), 404
+
+    result = check_sender_row(sender)
+    if result is None:
+        return jsonify({'success': False,
+                        'message': 'Bu gönderici için SMTP sunucusu tanımlı değil.'}), 400
+
+    summary = summarize(result)
+    print(f"[DNSBL] {summary}")
+    return jsonify({'success': True, 'data': result})
+
+
+@app.route('/api/senders/<int:sender_id>/reputation', methods=['GET'])
+@login_required
+@rate_limit(10, 60)
+def api_sender_reputation(sender_id):
+    """
+    Bir göndericinin itibar skorunu döner.
+    GET /api/senders/3/reputation
+    """
+    import database as _db_module
+    from reputation_score import calculate_sender_reputation
+
+    sender = _db_module.get_sender(sender_id)
+    if not sender:
+        return jsonify({'success': False, 'message': 'Gönderici bulunamadı.'}), 404
+
+    result = calculate_sender_reputation(sender=sender)
+    return jsonify({'success': True, 'data': result})
+
 
 # ══════════════════════════════════════════════════════════════════════
 #  ŞİFRE SIFIRLAMA ROUTE'LARI
@@ -2939,9 +4156,267 @@ def webhook_status():
     })
 
 
+# ══════════════════════════════════════════════════════════════════════
+#  BOUNCE SCANNER — IMAP üzerinden hata maili tarama
+# ══════════════════════════════════════════════════════════════════════
+
+@app.route('/settings/bounce-scanner')
+@login_required
+def settings_bounce_scanner():
+    """Bounce Scanner ayarlar sayfası."""
+    return render_template('pages/settings/bounce-scanner.html')
+
+
+@app.route('/api/bounce-scanner/scan', methods=['POST'])
+@login_required
+def api_bounce_scanner_scan():
+    """
+    Seçilen SMTP göndericinin kimlik bilgileriyle IMAP'a bağlanır,
+    bounce maillerini tarar ve sonuçları döner.
+
+    Body:
+        sender_id       — senders tablosundaki ID
+        imap_host       — (opsiyonel) IMAP sunucu; boşsa smtp_server kullanılır
+        imap_port       — (varsayılan 993)
+        mode            — 'unseen' | 'all'
+        add_suppression — bool; kalıcı bounce'ları suppression'a ekle
+    """
+    data = request.json or {}
+    sender_id       = data.get('sender_id')
+    imap_host_ovr   = (data.get('imap_host') or '').strip() or None
+    imap_port       = int(data.get('imap_port') or 993)
+    mode            = data.get('mode', 'unseen')          # 'unseen' | 'all'
+    add_suppression = bool(data.get('add_suppression', True))
+
+    if not sender_id:
+        return jsonify({'success': False, 'message': 'sender_id zorunludur.'}), 400
+
+    # Göndericiyi DB'den al (şifre çözülmüş olarak)
+    sender = db().get_sender(sender_id)
+    if not sender:
+        return jsonify({'success': False, 'message': 'Gönderici bulunamadı.'}), 404
+    if sender.get('sender_mode') != 'smtp':
+        return jsonify({'success': False, 'message': 'Sadece SMTP göndericiler desteklenir.'}), 400
+
+    imap_host = imap_host_ovr or sender.get('smtp_server', '')
+    imap_user = sender.get('username', '')
+    imap_pass = sender.get('password', '')   # get_sender() zaten decrypt eder
+
+    if not imap_host or not imap_user:
+        return jsonify({'success': False, 'message': 'IMAP sunucu veya kullanıcı adı eksik.'}), 400
+
+    # Bounce scanner modülünü import et
+    try:
+        import sys, os as _os
+        # bounce-scanner kodunu inline olarak çalıştırıyoruz (imap_tools gerekli)
+        from imap_tools import MailBox, AND
+        import re as _re
+        from datetime import datetime as _dt
+    except ImportError as e:
+        return jsonify({'success': False, 'message': f'Gerekli kütüphane eksik: {e}. pip install imap-tools'}), 500
+
+    # scanner.py'deki parse_bounce fonksiyonunu kullan (proje dizininden)
+    _scanner_path = _os.path.join(_os.path.dirname(__file__), 'bounce_scanner_engine.py')
+    # Eğer ayrı dosya yoksa inline parse_bounce kullanırız (bounce-scanner zip'ten kopyalandı)
+    try:
+        import bounce_scanner_engine as _bse
+        parse_bounce = _bse.parse_bounce
+    except ImportError:
+        # Inline fallback — temel parse mantığı
+        parse_bounce = _bounce_parse_inline
+
+    results      = []
+    stats        = {'okunan': 0, 'bounce': 0, 'yeni': 0, 'guncellendi': 0, 'atlanan': 0}
+    hata_mesaji  = None
+
+    try:
+        with MailBox(imap_host, imap_port).login(imap_user, imap_pass) as mb:
+            tumunu = (mode == 'all')
+            if tumunu:
+                f1 = list(mb.fetch(AND(from_='MAILER-DAEMON'), mark_seen=True, bulk=True))
+                f2 = list(mb.fetch(AND(from_='postmaster'),    mark_seen=True, bulk=True))
+                f3 = list(mb.fetch(AND(from_='Mail Delivery'), mark_seen=True, bulk=True))
+            else:
+                f1 = list(mb.fetch(AND(from_='MAILER-DAEMON', seen=False), mark_seen=True, bulk=True))
+                f2 = list(mb.fetch(AND(from_='postmaster',    seen=False), mark_seen=True, bulk=True))
+                f3 = list(mb.fetch(AND(from_='Mail Delivery', seen=False), mark_seen=True, bulk=True))
+
+            # Duplicate temizle
+            seen_uid, mailler = set(), []
+            for m in f1 + f2 + f3:
+                if m.uid not in seen_uid:
+                    seen_uid.add(m.uid)
+                    mailler.append(m)
+
+            for mail in mailler:
+                stats['okunan'] += 1
+                # Ham içerik
+                icerik = ''
+                try:
+                    if hasattr(mail, 'obj') and mail.obj:
+                        icerik += mail.obj.as_string()
+                except Exception:
+                    pass
+                if mail.text:  icerik += '\n' + mail.text
+                if mail.html:  icerik += '\n' + mail.html
+                for ek in mail.attachments:
+                    if ek.content_type in ('message/delivery-status','text/rfc822-headers','message/rfc822','text/plain'):
+                        try:    icerik += '\n' + ek.payload.decode('utf-8', errors='replace')
+                        except: pass
+                try:
+                    for k, v in mail.headers.items():
+                        icerik += f'\n{k}: {v}'
+                except Exception:
+                    pass
+
+                bounce = parse_bounce(icerik)
+                if not bounce:
+                    stats['atlanan'] += 1
+                    continue
+
+                stats['bounce'] += 1
+
+                # DB'ye kaydet
+                sonuc = db().bounce_kaydet(bounce)
+                is_new = (sonuc == 'yeni')
+                if is_new:
+                    stats['yeni'] += 1
+                else:
+                    stats['guncellendi'] += 1
+
+                # Suppression — sadece kalıcı ve suppression_ekle=True olanlar
+                if add_suppression and bounce.get('suppression_ekle'):
+                    try:
+                        db().suppression_add(
+                            email=bounce['email'],
+                            reason=f"Bounce: {bounce.get('hata_kodu','')}: {bounce.get('aciklama','')}",
+                            added_by='bounce_scanner'
+                        )
+                    except Exception:
+                        pass  # Suppression hatası taramayı durdurmasın
+
+                results.append({
+                    'email':            bounce['email'],
+                    'kategori':         bounce.get('kategori', 'kalici'),
+                    'bounce_tipi':      bounce.get('bounce_tipi', 'kalici'),
+                    'hata_kodu':        bounce.get('hata_kodu', ''),
+                    'aciklama':         bounce.get('aciklama', ''),
+                    'etiket':           bounce.get('etiket', ''),
+                    'rfc_etiket':       bounce.get('rfc_etiket', ''),
+                    'suppression_ekle': bounce.get('suppression_ekle', False),
+                    'is_new':           is_new,
+                })
+
+    except Exception as e:
+        hata_mesaji = str(e)
+
+    # Tarama geçmişini kaydet
+    try:
+        db().bounce_tarama_gecmisi_kaydet(
+            hesap=imap_user,
+            okunan=stats['okunan'],
+            bounce=stats['bounce'],
+            yeni=stats['yeni'],
+            guncellendi=stats['guncellendi'],
+            atlanan=stats['atlanan'],
+            hata=hata_mesaji,
+        )
+    except Exception:
+        pass
+
+    if hata_mesaji and stats['okunan'] == 0:
+        return jsonify({'success': False, 'message': f'IMAP bağlantı hatası: {hata_mesaji}'}), 500
+
+    # Bounce oranı uyarısı
+    bounce_uyari = None
+    if stats['okunan'] > 0:
+        oran = round(stats['bounce'] / stats['okunan'] * 100, 1)
+        if oran >= 10:
+            bounce_uyari = {'seviye': 'kritik', 'oran': oran,
+                'mesaj': f'⚠️ Bounce oranı %{oran} — kritik! Listenizi temizleyin.'}
+        elif oran >= 5:
+            bounce_uyari = {'seviye': 'uyari', 'oran': oran,
+                'mesaj': f'⚠️ Bounce oranı %{oran} — yüksek. Liste kalitesini kontrol edin.'}
+        elif oran >= 2:
+            bounce_uyari = {'seviye': 'dikkat', 'oran': oran,
+                'mesaj': f'ℹ️ Bounce oranı %{oran} — dikkat gerektiriyor.'}
+
+    return jsonify({
+        'success':      True,
+        'stats':        stats,
+        'results':      results,
+        'message':      hata_mesaji,
+        'bounce_uyari': bounce_uyari,
+    })
+
+
+def _bounce_parse_inline(icerik: str):
+    """
+    Minimal inline bounce parser — bounce_scanner_engine.py yoksa kullanılır.
+    Temel RFC 3464 DSN ayrıştırması yapar.
+    """
+    import re
+
+    # Return-Path kontrolü
+    rp = re.search(r'^Return-Path:\s*(.+)', icerik, re.IGNORECASE | re.MULTILINE)
+    if rp:
+        val = rp.group(1).strip()
+        if val not in ('<>', ''):
+            return None
+
+    # Final-Recipient
+    m = re.search(r'Final-Recipient:\s*rfc822;\s*([^\r\n;]+)', icerik, re.IGNORECASE)
+    if not m:
+        orig = re.search(r'Original-Recipient:\s*rfc822;\s*([^\r\n;]+)', icerik, re.IGNORECASE)
+        if not orig:
+            return None
+        email = orig.group(1).strip().lower()
+    else:
+        email = re.sub(r'^[^a-z0-9._%+\-]+', '', m.group(1).strip().lower())
+
+    if not re.match(r'^[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,}$', email):
+        return None
+
+    ma = re.search(r'^Action:\s*(\S+)', icerik, re.IGNORECASE | re.MULTILINE)
+    action = ma.group(1).strip().lower() if ma else 'unknown'
+    ms = re.search(r'^Status:\s*(\S+)', icerik, re.IGNORECASE | re.MULTILINE)
+    status = ms.group(1).strip() if ms else ''
+
+    if action == 'failed':
+        kategori = 'kalici'
+    elif action == 'delayed':
+        kategori = 'gecici'
+    else:
+        kategori = 'kalici' if status.startswith('5') else 'gecici'
+
+    bounce_tipi = 'kalici' if kategori == 'kalici' else 'gecici'
+    suppression_ekle = (kategori == 'kalici' and status not in {'5.4.14','5.5.1','5.6.0','5.7.64'})
+
+    return {
+        'email':            email,
+        'bounce_tipi':      bounce_tipi,
+        'hata_kodu':        status,
+        'aciklama':         '',
+        'diagnostic':       '',
+        'kategori':         kategori,
+        'suppression_ekle': suppression_ekle,
+    }
+
+
+@app.route('/api/bounce-scanner/history', methods=['GET'])
+@login_required
+def api_bounce_scanner_history():
+    """Son 20 bounce tarama geçmişini döner."""
+    try:
+        rows = db().bounce_tarama_gecmisi_listele()
+        return jsonify({'success': True, 'data': rows})
+    except Exception as e:
+        return jsonify({'success': False, 'data': [], 'message': str(e)})
+
+
 if __name__ == '__main__':
     # Doğrudan çalıştırıldığında (python app.py):
     # debug=False: üretimde hata sayfası gösterme
     # host=127.0.0.1: sadece localhost — nginx/apache proxy arkasında çalışır
     # threaded=True: eş zamanlı SSE stream'lerini destekler
-    app.run(debug=False, host='127.0.0.1', port=5000, threaded=True)
+    app.run(debug=False, host='127.0.0.1', port=5002, threaded=True)

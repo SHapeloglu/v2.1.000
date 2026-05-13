@@ -110,7 +110,7 @@ CREATE TABLE IF NOT EXISTS senders (
 
 CREATE TABLE IF NOT EXISTS send_rules (
     id              INT AUTO_INCREMENT PRIMARY KEY,
-    sender_id       INT          NOT NULL,
+    sender_id       INT          DEFAULT NULL,
     name            VARCHAR(200) NOT NULL,
     min_interval_h  INT          NOT NULL DEFAULT 0   COMMENT 'Aynı adrese tekrar göndermek için min saat (0=sınırsız)',
     is_active       TINYINT(1)   NOT NULL DEFAULT 1,
@@ -128,14 +128,16 @@ CREATE TABLE IF NOT EXISTS send_log (
     error_msg         TEXT,
     message_id        VARCHAR(500)           COMMENT 'API/SES message ID (teslimat takibi)',
     provider          VARCHAR(50)            COMMENT 'smtp|ses|brevo|mailrelay|api',
+    body_html         MEDIUMTEXT             COMMENT 'Gönderilen HTML içerik (retry için)',
     sent_by_user_id   INT                    COMMENT 'Gönderimi başlatan kullanıcı ID',
     sent_by_username  VARCHAR(100)           COMMENT 'Gönderimi başlatan kullanıcı adı (snapshot)',
     sent_at           DATETIME     DEFAULT CURRENT_TIMESTAMP,
-    INDEX idx_recipient  (recipient(100)),
-    INDEX idx_sent_at    (sent_at),
-    INDEX idx_sender     (sender_id),
-    INDEX idx_sent_by    (sent_by_user_id),
-    INDEX idx_message_id (message_id(100)),
+    INDEX idx_recipient      (recipient(100)),
+    INDEX idx_sent_at        (sent_at),
+    INDEX idx_sender         (sender_id),
+    INDEX idx_sent_by        (sent_by_user_id),
+    INDEX idx_message_id     (message_id(100)),
+    INDEX idx_sender_sent_at (sender_id, sent_at),
     FOREIGN KEY (sender_id) REFERENCES senders(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
@@ -162,6 +164,8 @@ CREATE TABLE IF NOT EXISTS users (
     role        ENUM('admin','editor') NOT NULL DEFAULT 'editor',
     is_active   TINYINT(1) NOT NULL DEFAULT 1,
     theme       VARCHAR(50) NOT NULL DEFAULT 'charcoal' COMMENT 'Kullanıcı arayüz teması',
+    user_prefs  MEDIUMTEXT               COMMENT 'Kullanıcı tercihleri (JSON — bulk-send seçimleri vb.)',
+    global_interval_h INT NOT NULL DEFAULT 0 COMMENT 'Sistem geneli tekrar engeli (saat). 0=kapalı, 24=günlük, 168=haftalık, 720=aylık',
     last_login  DATETIME,
     created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
     INDEX idx_username (username)
@@ -172,6 +176,7 @@ CREATE TABLE IF NOT EXISTS mail_templates (
     type        ENUM('subject','body') NOT NULL  COMMENT 'Şablon tipi: konu veya mesaj',
     name        VARCHAR(200) NOT NULL             COMMENT 'Şablona verilen isim',
     content     LONGTEXT NOT NULL                 COMMENT 'Şablon içeriği',
+    is_default  TINYINT(1) NOT NULL DEFAULT 0    COMMENT 'Varsayılan şablon (her tip için 1 tane)',
     created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at  DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     INDEX idx_type (type)
@@ -179,7 +184,7 @@ CREATE TABLE IF NOT EXISTS mail_templates (
 
 CREATE TABLE IF NOT EXISTS suppression_list (
     id              BIGINT AUTO_INCREMENT PRIMARY KEY,
-    email           VARCHAR(500) NOT NULL,
+    email           VARCHAR(254) NOT NULL,
     reason          ENUM('bounce','complaint','unsubscribe','invalid') NOT NULL,
     source          VARCHAR(50),
     created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -231,6 +236,13 @@ CREATE TABLE IF NOT EXISTS send_queue (
     attachment_data LONGBLOB,
     batch_size      INT NOT NULL DEFAULT 0        COMMENT '0 = parçasız',
     batch_wait_min  INT NOT NULL DEFAULT 60,
+    -- Madde 5: A/B test
+    subject_b       TEXT                         COMMENT 'A/B test — B grubu konu satırı',
+    ab_test         TINYINT(1) NOT NULL DEFAULT 0 COMMENT 'A/B test aktif mi',
+    ab_ratio        TINYINT(1) NOT NULL DEFAULT 50 COMMENT 'A grubu yüzdesi (varsayılan 50)',
+    -- Madde 2: filtre ayarları
+    filter_role        TINYINT(1) NOT NULL DEFAULT 0 COMMENT 'Rol adreslerini atla',
+    filter_disposable  TINYINT(1) NOT NULL DEFAULT 1 COMMENT 'Geçici domainleri atla',
     status          ENUM('pending','running','paused','done','cancelled') NOT NULL DEFAULT 'pending',
     current_offset  INT NOT NULL DEFAULT 0        COMMENT 'Şu an kaçıncı kayıtta',
     total_count     INT NOT NULL DEFAULT 0,
@@ -314,6 +326,37 @@ CREATE TABLE IF NOT EXISTS ses_notifications (
     INDEX idx_recipient (recipient(100)),
     INDEX idx_received  (received_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS bounce_adresleri (
+    id              BIGINT AUTO_INCREMENT PRIMARY KEY,
+    email           VARCHAR(300) NOT NULL,
+    bounce_tipi     ENUM('kalici','gecici') NOT NULL DEFAULT 'kalici',
+    kategori        VARCHAR(50)  DEFAULT 'kalici'   COMMENT 'kalici|gecici|gonderici_sorunu|mail_loop|internal_domain',
+    hata_kodu       VARCHAR(20)  DEFAULT '',
+    aciklama        VARCHAR(500) DEFAULT '',
+    diagnostic      TEXT,
+    suppression_ekle TINYINT(1) NOT NULL DEFAULT 0,
+    ilk_gorulme     DATETIME    DEFAULT CURRENT_TIMESTAMP,
+    son_gorulme     DATETIME    DEFAULT CURRENT_TIMESTAMP,
+    adet            INT         NOT NULL DEFAULT 1,
+    UNIQUE KEY uq_email (email(250)),
+    INDEX idx_kategori  (kategori),
+    INDEX idx_tipi      (bounce_tipi),
+    INDEX idx_tarih     (son_gorulme)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS tarama_gecmisi (
+    id              INT AUTO_INCREMENT PRIMARY KEY,
+    tarama_zamani   DATETIME    DEFAULT CURRENT_TIMESTAMP,
+    hesap           VARCHAR(200),
+    okunan_mail     INT         DEFAULT 0,
+    bulunan_bounce  INT         DEFAULT 0,
+    yeni_adres      INT         DEFAULT 0,
+    guncellenen     INT         DEFAULT 0,
+    atlanan         INT         DEFAULT 0,
+    hata            TEXT,
+    INDEX idx_zaman (tarama_zamani)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 """
 
 def init_db():
@@ -374,18 +417,52 @@ def migrate_db():
         ("senders",  "api_method",      "ALTER TABLE senders ADD COLUMN api_method      VARCHAR(10)  DEFAULT 'POST'"),
         ("senders",  "api_payload_tpl", "ALTER TABLE senders ADD COLUMN api_payload_tpl TEXT         COMMENT 'JSON payload template'"),
         ("users",    "theme",           "ALTER TABLE users    ADD COLUMN theme           VARCHAR(50)  NOT NULL DEFAULT 'charcoal' COMMENT 'Kullanıcı arayüz teması'"),
+        ("users",    "user_prefs",      "ALTER TABLE users    ADD COLUMN user_prefs      MEDIUMTEXT               COMMENT 'Kullanıcı tercihleri (JSON)'"     ),
+        ("users",    "global_interval_h","ALTER TABLE users    ADD COLUMN global_interval_h INT NOT NULL DEFAULT 0 COMMENT 'Sistem geneli tekrar engeli (saat)'"),
+        ("send_rules","user_id",         "ALTER TABLE send_rules ADD COLUMN user_id INT DEFAULT NULL COMMENT 'Kullanıcı bazlı kural — NULL ise gönderici bazlı'"),
+        ("mail_templates","is_default",      "ALTER TABLE mail_templates ADD COLUMN is_default TINYINT(1) NOT NULL DEFAULT 0 COMMENT 'Varsayılan şablon'"),
         ("send_log", "sent_by_user_id", "ALTER TABLE send_log ADD COLUMN sent_by_user_id INT          COMMENT 'Gönderimi başlatan kullanıcı ID'"),
         ("send_log", "sent_by_username","ALTER TABLE send_log ADD COLUMN sent_by_username VARCHAR(100) COMMENT 'Kullanıcı adı snapshot'"),
         ("send_log", "message_id",      "ALTER TABLE send_log ADD COLUMN message_id   VARCHAR(500) COMMENT 'API/SES message ID'"),
         ("send_log", "provider",        "ALTER TABLE send_log ADD COLUMN provider      VARCHAR(50)  COMMENT 'smtp|ses|brevo|mailrelay|api'"),
+        ("send_log", "body_html",       "ALTER TABLE send_log ADD COLUMN body_html     MEDIUMTEXT   COMMENT 'Gönderilen HTML içerik (retry için)'"),
         ("email_verify_jobs", "suppressed_count",
          "ALTER TABLE email_verify_jobs ADD COLUMN suppressed_count INT NOT NULL DEFAULT 0 COMMENT 'Suppression eklenen sayı'"),
+        # Madde 1 — daily_limit / warmup kolonları (eski kurulumlar için migration)
+        ("senders", "daily_limit",
+         "ALTER TABLE senders ADD COLUMN daily_limit INT NOT NULL DEFAULT 0 COMMENT 'Günlük maksimum gönderim (0=sınırsız)'"),
+        ("senders", "warmup_enabled",
+         "ALTER TABLE senders ADD COLUMN warmup_enabled TINYINT(1) NOT NULL DEFAULT 0 COMMENT 'Warmup planı aktif mi'"),
+        ("senders", "warmup_start_date",
+         "ALTER TABLE senders ADD COLUMN warmup_start_date DATE DEFAULT NULL COMMENT 'Warmup başlangıç tarihi'"),
+        # Madde 5 — A/B test kolonları (send_queue)
+        ("send_queue", "subject_b",
+         "ALTER TABLE send_queue ADD COLUMN subject_b TEXT COMMENT 'A/B test B grubu konu satırı'"),
+        ("send_queue", "ab_test",
+         "ALTER TABLE send_queue ADD COLUMN ab_test TINYINT(1) NOT NULL DEFAULT 0 COMMENT 'A/B test aktif mi'"),
+        ("send_queue", "ab_ratio",
+         "ALTER TABLE send_queue ADD COLUMN ab_ratio TINYINT(1) NOT NULL DEFAULT 50 COMMENT 'A grubu yüzdesi'"),
+        # Madde 2 — filtre kolonları (send_queue)
+        ("send_queue", "filter_role",
+         "ALTER TABLE send_queue ADD COLUMN filter_role TINYINT(1) NOT NULL DEFAULT 0 COMMENT 'Rol adreslerini atla'"),
+        ("send_queue", "filter_disposable",
+         "ALTER TABLE send_queue ADD COLUMN filter_disposable TINYINT(1) NOT NULL DEFAULT 1 COMMENT 'Geçici domainleri atla'"),
     ]
 
     # Koşulsuz çalışan migration'lar (MODIFY, CREATE TABLE vb.)
     always_migrations = [
+        # send_rules.sender_id NULL olabilmeli (kullanıcı bazlı kurallarda sender_id gerekmez)
+        "ALTER TABLE send_rules MODIFY COLUMN sender_id INT DEFAULT NULL",
         # ENUM genişletme: idempotent, tekrar çalışsa da sorun yok
         "ALTER TABLE senders MODIFY COLUMN sender_mode ENUM('smtp','ses','api') NOT NULL DEFAULT 'smtp'",
+        # Madde 6 — rate_limit_log tablosu (process-agnostic rate limiting)
+        """CREATE TABLE IF NOT EXISTS rate_limit_log (
+    id         BIGINT AUTO_INCREMENT PRIMARY KEY,
+    ip         VARCHAR(45) NOT NULL,
+    endpoint   VARCHAR(200) NOT NULL DEFAULT '',
+    hit_at     DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    INDEX idx_ip_ep_hit (ip, endpoint, hit_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
         # audit_log tablosu
         """CREATE TABLE IF NOT EXISTS audit_log (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
@@ -441,6 +518,7 @@ def _get_fernet_key():
     if not key:
         raise ValueError('SECRET_KEY .env dosyasında tanımlı değil!')
     
+    # 44 karakter = standart Fernet.generate_key() çıktısı — direkt kullan
     if len(key) == 44:
         try:
             from cryptography.fernet import Fernet
@@ -448,13 +526,14 @@ def _get_fernet_key():
         except Exception:
             pass
     
+    # Farklı uzunluktaki SECRET_KEY → 32 byte'a normalize edip base64url'e çevir
     try:
         from cryptography.fernet import Fernet
         key_bytes = key.encode('utf-8')
         if len(key_bytes) < 32:
-            key_bytes = key_bytes.ljust(32, b'\0')
+            key_bytes = key_bytes.ljust(32, b'\0')  # Kısa ise null ile doldur
         else:
-            key_bytes = key_bytes[:32]
+            key_bytes = key_bytes[:32]              # Uzunsa kırp
         
         fernet_key = base64.urlsafe_b64encode(key_bytes)
         return Fernet(fernet_key)
@@ -527,6 +606,49 @@ def add_to_suppression(email, reason, source=None):
     finally:
         conn.close()
 
+def bulk_add_to_suppression(emails, reason, source=None):
+    """
+    Birden fazla adresi tek DB bağlantısında tek sorguda suppression listesine ekler.
+    Her adres için ayrı bağlantı açmak yerine executemany + tek commit kullanır.
+    emails: list of str
+    Döner: (added_count, skipped_count)
+    """
+    if not emails:
+        return 0, 0
+    conn = get_connection()
+    added, skipped = 0, 0
+    try:
+        with conn.cursor() as cur:
+            rows = []
+            for email in emails:
+                e = email.strip().lower()
+                if '@' not in e:
+                    skipped += 1
+                    continue
+                rows.append((e, reason, source or 'manual'))
+
+            if rows:
+                cur.executemany("""
+                    INSERT INTO suppression_list (email, reason, source)
+                    VALUES (%s, %s, %s)
+                    ON DUPLICATE KEY UPDATE
+                        reason     = VALUES(reason),
+                        source     = VALUES(source),
+                        created_at = CURRENT_TIMESTAMP
+                """, rows)
+                added = cur.rowcount
+                # ON DUPLICATE KEY UPDATE: rowcount=1 yeni, 2 güncellendi — normalize et
+                added = min(added, len(rows))
+        conn.commit()
+        return added, skipped
+    except Exception as e:
+        conn.rollback()
+        print(f"Bulk suppression ekleme hatası: {e}")
+        return 0, len(emails)
+    finally:
+        conn.close()
+
+
 def is_suppressed(email):
     """
     E-posta suppression listesinde veya domain bloklama listesinde ise True döner.
@@ -548,12 +670,12 @@ def is_suppressed(email):
             # 2. Domain kontrolü
             domain = email.split('@')[-1].lower().strip() if '@' in email else ''
             if domain:
-                cur.execute(
-                    "SELECT COUNT(*) as cnt FROM suppression_domains WHERE domain=%s",
-                    (domain,)
-                )
-                if cur.fetchone()['cnt'] > 0:
-                    return True
+                parts = domain.split('.')
+                candidates = ['.'.join(parts[i:]) for i in range(len(parts)-1)]
+                candidates.insert(0, domain)
+                for candidate in candidates:
+                    cur.execute("SELECT COUNT(*) as cnt FROM suppression_domains WHERE domain=%s",(candidate,))
+                    if cur.fetchone()['cnt'] > 0: return True
             return False
     except Exception:
         return False
@@ -622,7 +744,14 @@ def delete_suppression_domain(domain):
 
 # ── Unsubscribe Token ──────────────────────────────────────────────────
 def generate_unsubscribe_token(email: str) -> str:
-    """E-posta adresi için tek kullanımlık güvenli token üretir ve DB'ye kaydeder. 7 gün geçerli."""
+    """
+    E-posta adresi için tek kullanımlık güvenli token üretir ve DB'ye kaydeder.
+
+    - 32 byte URL-safe token üretir (secrets.token_urlsafe — kriptografik güvenli)
+    - Aynı adres için önceki kullanılmamış token varsa önce siler (tekrar istekler için)
+    - 7 gün geçerlidir; sonrasında verify_unsubscribe_token() None döner
+    Döner: token string veya hata durumunda ''
+    """
     import secrets
     conn = get_connection()
     try:
@@ -644,7 +773,16 @@ def generate_unsubscribe_token(email: str) -> str:
         conn.close()
 
 def verify_unsubscribe_token(token: str):
-    """Token geçerliyse email adresini döner, değilse None döner. Token'ı kullanıldı olarak işaretler."""
+    """
+    Token geçerliyse email adresini döner ve tokeni kullanıldı olarak işaretler.
+
+    Kontroller:
+      - Token DB'de kayıtlı mı?
+      - used=0 mu? (daha önce kullanılmamış)
+      - expires_at > şimdi mi? (süresi dolmamış)
+    Geçersiz/süresi dolmuş/kullanılmışsa None döner.
+    Token tek kullanımlıktır — bu çağrıdan sonra tekrar doğrulanamaz.
+    """
     conn = get_connection()
     try:
         with conn.cursor() as cur:
@@ -775,6 +913,17 @@ def save_sender(data, sender_id=None):
                     fields += ["smtp_server=NULL", "smtp_port=NULL", "username=NULL", "password=NULL",
                                "aws_access_key=NULL", "aws_secret_key=NULL", "aws_region=NULL"]
 
+                # Günlük limit ve warmup her mode için ortak
+                fields.append("daily_limit=%s")
+                params.append(int(data.get('daily_limit') or 0))
+                fields.append("warmup_enabled=%s")
+                params.append(int(data.get('warmup_enabled') or 0))
+                if data.get('warmup_enabled') and data.get('warmup_start_date'):
+                    fields.append("warmup_start_date=%s")
+                    params.append(data['warmup_start_date'])
+                elif not data.get('warmup_enabled'):
+                    fields.append("warmup_start_date=NULL")
+
                 params.append(sender_id)
                 cur.execute(f"UPDATE senders SET {', '.join(fields)} WHERE id=%s", params)
 
@@ -851,12 +1000,17 @@ def delete_sender(sender_id):
 
 def get_rules():
 
-    """Tüm gönderim kurallarını listeler."""
+    """Tüm gönderim kurallarını listeler (kullanıcı ve gönderici bazlı)."""
     conn = get_connection()
     try:
         with conn.cursor() as cur:
-            cur.execute("""SELECT r.*, s.name as sender_name, s.email as sender_email
-                           FROM send_rules r JOIN senders s ON r.sender_id=s.id
+            cur.execute("""SELECT r.*,
+                                  s.name     AS sender_name,
+                                  s.email    AS sender_email,
+                                  u.username AS user_name
+                           FROM send_rules r
+                           LEFT JOIN senders s ON r.sender_id = s.id
+                           LEFT JOIN users   u ON r.user_id   = u.id
                            ORDER BY r.name""")
             return cur.fetchall()
     finally:
@@ -875,22 +1029,46 @@ def get_rule(rule_id):
 
 def save_rule(data, rule_id=None):
 
-    """Yeni kural oluşturur veya mevcutu günceller."""
+    """Yeni kural oluşturur veya mevcutu günceller.
+    Kural tipi: user_id doluysa kullanici bazli, sender_id doluysa gonderici bazli.
+    """
     conn = get_connection()
     try:
+        name         = data['name']
+        sender_id    = data.get('sender_id') or None
+        user_id      = data.get('user_id')   or None
+        min_interval = data['min_interval_h']
+        is_active    = data.get('is_active', 1)
         with conn.cursor() as cur:
             if rule_id:
-                cur.execute("UPDATE send_rules SET name=%s,sender_id=%s,min_interval_h=%s,is_active=%s WHERE id=%s",
-                            (data['name'],data['sender_id'],data['min_interval_h'],data['is_active'],rule_id))
+                cur.execute(
+                    "UPDATE send_rules SET name=%s,sender_id=%s,user_id=%s,min_interval_h=%s,is_active=%s WHERE id=%s",
+                    (name, sender_id, user_id, min_interval, is_active, rule_id)
+                )
             else:
-                cur.execute("INSERT INTO send_rules (name,sender_id,min_interval_h,is_active) VALUES (%s,%s,%s,%s)",
-                            (data['name'],data['sender_id'],data['min_interval_h'],data.get('is_active',1)))
+                cur.execute(
+                    "INSERT INTO send_rules (name,sender_id,user_id,min_interval_h,is_active) VALUES (%s,%s,%s,%s,%s)",
+                    (name, sender_id, user_id, min_interval, is_active)
+                )
                 rule_id = cur.lastrowid
         conn.commit()
         return True, rule_id
     except Exception as e:
         conn.rollback()
         return False, str(e)
+    finally:
+        conn.close()
+
+def get_user_rules(user_id):
+    """Belirli bir kullaniciya atanmis aktif kurallari doner."""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT * FROM send_rules WHERE user_id=%s AND is_active=1 ORDER BY min_interval_h DESC LIMIT 1",
+                (user_id,)
+            )
+            return cur.fetchone()
     finally:
         conn.close()
 
@@ -909,13 +1087,36 @@ def delete_rule(rule_id):
     finally:
         conn.close()
 
+
+def get_sent_count_to_recipient(sender_id: int, recipient: str) -> int:
+    """
+    Belirtilen gönderici tarafından bu alıcıya daha önce kaç başarılı
+    mail gönderildiğini döner. A/B history modu için kullanılır.
+    """
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """SELECT COUNT(*) as cnt FROM send_log
+                   WHERE sender_id=%s AND recipient=%s AND status='sent'""",
+                (sender_id, recipient.lower())
+            )
+            row = cur.fetchone()
+            return int(row['cnt']) if row else 0
+    except Exception:
+        return 0
+    finally:
+        conn.close()
+
+
 def log_send(sender_id, rule_id, recipient, subject, status, error_msg=None,
-             user_id=None, username=None, message_id=None, provider=None):
+             user_id=None, username=None, message_id=None, provider=None, body_html=None):
     """
     Gönderim sonucunu send_log tablosuna kaydeder.
     status:     'sent' | 'failed' | 'skipped'
     message_id: API/SES'ten dönen mesaj ID (teslimat takibi için)
     provider:   'smtp' | 'ses' | 'brevo' | 'mailrelay' | 'api'
+    body_html:  Gönderilen HTML içerik — retry_failed için saklanır
     """
     conn = get_connection()
     try:
@@ -923,10 +1124,10 @@ def log_send(sender_id, rule_id, recipient, subject, status, error_msg=None,
             cur.execute(
                 """INSERT INTO send_log
                     (sender_id, rule_id, recipient, subject, status, error_msg,
-                     message_id, provider, sent_by_user_id, sent_by_username)
-                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                     message_id, provider, sent_by_user_id, sent_by_username, body_html)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                 (sender_id, rule_id, recipient, subject, status, error_msg,
-                 message_id, provider, user_id, username)
+                 message_id, provider, user_id, username, body_html)
             )
         conn.commit()
     except Exception as e:
@@ -963,6 +1164,96 @@ def audit(user_id, username, action, target_type=None, target_id=None,
     finally:
         conn.close()
 
+def get_audit_log(page=1, per_page=50, username=None, action=None,
+                  date_from=None, date_to=None):
+    """
+    Audit log kayıtlarını filtreli ve sayfalı döner.
+    Döner: (rows, total_count)
+
+    Parametreler:
+        page, per_page : sayfalama
+        username       : kullanıcı adına göre filtre (LIKE)
+        action         : işlem tipine göre filtre (tam eşleşme)
+        date_from      : başlangıç tarihi (YYYY-MM-DD)
+        date_to        : bitiş tarihi (YYYY-MM-DD)
+    """
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            conditions = []
+            params     = []
+
+            if username:
+                conditions.append("username LIKE %s")
+                params.append(f"%{username}%")
+            if action:
+                conditions.append("action = %s")
+                params.append(action)
+            if date_from:
+                conditions.append("DATE(created_at) >= %s")
+                params.append(date_from)
+            if date_to:
+                conditions.append("DATE(created_at) <= %s")
+                params.append(date_to)
+
+            where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+
+            # Toplam kayıt sayısı
+            cur.execute(f"SELECT COUNT(*) as cnt FROM audit_log {where}", params)
+            total = cur.fetchone()['cnt']
+
+            # Sayfalı kayıtlar
+            offset = (page - 1) * per_page
+            cur.execute(
+                f"SELECT * FROM audit_log {where} "
+                f"ORDER BY created_at DESC LIMIT %s OFFSET %s",
+                params + [per_page, offset]
+            )
+            rows = cur.fetchall()
+            for r in rows:
+                if isinstance(r.get('created_at'), __import__('datetime').datetime):
+                    r['created_at'] = r['created_at'].strftime('%d.%m.%Y %H:%M:%S')
+
+        return rows, total
+    except Exception as e:
+        print(f"get_audit_log hatası: {e}")
+        return [], 0
+    finally:
+        conn.close()
+
+
+def get_audit_log_actions():
+    """Audit log'da kullanılan benzersiz action tiplerini döner (filtre dropdown için)."""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT DISTINCT action FROM audit_log ORDER BY action"
+            )
+            return [r['action'] for r in cur.fetchall()]
+    except Exception:
+        return []
+    finally:
+        conn.close()
+
+
+def get_last_sent_any_sender(recipient):
+    """
+    Herhangi bir gondeniciden yapilan en son basarili gonderimi doner.
+    Kullanici bazli kural kontrolunde kullanilir.
+    """
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""SELECT sent_at FROM send_log
+                           WHERE recipient=%s AND status='sent'
+                           ORDER BY sent_at DESC LIMIT 1""",
+                        (recipient,))
+            row = cur.fetchone()
+            return row['sent_at'] if row else None
+    finally:
+        conn.close()
+
 def get_last_sent(sender_id, recipient):
     """
     Belirli gönderici ve alıcı için en son başarılı gönderimin zamanını döner.
@@ -981,20 +1272,306 @@ def get_last_sent(sender_id, recipient):
     finally:
         conn.close()
 
-def can_send(sender_id, recipient, min_interval_h):
+def get_sender_sent_today(sender_id):
+    """Bugün bu sender'dan kaç mail başarıyla gönderildi."""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT COUNT(*) as cnt FROM send_log
+                WHERE sender_id=%s
+                  AND status='sent'
+                  AND sent_at >= DATE(UTC_TIMESTAMP())
+                  AND sent_at <  DATE(UTC_TIMESTAMP()) + INTERVAL 1 DAY
+            """, (sender_id,))
+            row = cur.fetchone()
+            return int(row['cnt']) if row else 0
+    except Exception:
+        return 0
+    finally:
+        conn.close()
+
+def get_sender_daily_limit(sender_id):
+    """Sender'ın günlük limit ayarını döner. 0 = limitsiz."""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT daily_limit FROM senders WHERE id=%s", (sender_id,))
+            row = cur.fetchone()
+            if row and row.get('daily_limit'):
+                return int(row['daily_limit'])
+            return 0
+    except Exception:
+        return 0
+    finally:
+        conn.close()
+
+def get_warmup_limit(sender_id):
+    """
+    Sender'ın warmup planına göre bugün göndermesi gereken max mail sayısını döner.
+
+    Warmup tablosu yoksa veya sender kayıtlı değilse 0 döner (= sınır yok).
+    Warmup planı:
+      - Gün 1-3:   50/gün
+      - Gün 4-7:   100/gün
+      - Gün 8-14:  200/gün
+      - Gün 15-21: 400/gün
+      - Gün 22+:   None (warmup bitti, günlük limit devralır)
+    """
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT warmup_start_date FROM senders
+                WHERE id=%s AND warmup_enabled=1
+            """, (sender_id,))
+            row = cur.fetchone()
+            if not row or not row.get('warmup_start_date'):
+                return 0  # Warmup aktif değil veya başlangıç tarihi girilmemiş
+            import datetime
+            start = row['warmup_start_date']
+            if isinstance(start, str):
+                start = datetime.date.fromisoformat(start)
+            # Kaçıncı warmup günündeyiz? (1-bazlı: ilk gün = 1)
+            day = (datetime.date.today() - start).days + 1
+            # Warmup planı: kademeli artan günlük limit
+            if day <= 0:
+                return 50   # Başlangıç tarihi gelecekte — en düşük limitten başla
+            elif day <= 3:
+                return 50   # Gün 1-3: ısınma aşaması
+            elif day <= 7:
+                return 100  # Gün 4-7
+            elif day <= 14:
+                return 200  # Gün 8-14
+            elif day <= 21:
+                return 400  # Gün 15-21
+            else:
+                return 0    # Gün 22+: warmup tamamlandı, günlük limit devralır
+    except Exception:
+        return 0
+    finally:
+        conn.close()
+
+
+
+
+def can_send_ctx(conn, sender_id, recipient, min_interval_h,
+                 user_id=None,
+                 _sender_cache=None, _suppression_set=None,
+                 _user_rule_cache=None, _sent_today_cache=None):
+    """
+    Bulk gönderim için optimize edilmiş can_send versiyonu.
+    Dışarıdan açık bağlantı alır — her mail için bağlantı açmaz.
+    Önbellek parametreleri ile tekrarlı sorgular önlenir:
+      _sender_cache    : {sender_id: {daily_limit, warmup_limit}} — sender başına bir kez
+      _suppression_set : set() — oturum başında bir kez yüklenir
+      _user_rule_cache : {user_id: rule_row} — kullanıcı başına bir kez
+      _sent_today_cache: {sender_id: count} — oturum başında bir kez alınır
+    """
+    import datetime
+
+    # ── 1. Suppression kontrolü — set önbelleğinden O(1) lookup
+    if _suppression_set is not None:
+        email_lower = recipient.lower()
+        domain = email_lower.split('@')[-1] if '@' in email_lower else ''
+        if email_lower in _suppression_set or domain in _suppression_set:
+            return False, "Bu e-posta adresi bastırma listesinde (bounce, complaint veya unsubscribe)"
+    else:
+        if is_suppressed(recipient):
+            return False, "Bu e-posta adresi bastırma listesinde (bounce, complaint veya unsubscribe)"
+
+    # ── 2. Günlük kota ve warmup — sender önbelleğinden al
+    if _sender_cache is not None:
+        sc = _sender_cache.get(sender_id)
+        if sc is None:
+            # İlk kez: sender bilgisini tek sorguda çek
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT daily_limit, warmup_enabled, warmup_start_date
+                    FROM senders WHERE id=%s
+                """, (sender_id,))
+                row = cur.fetchone() or {}
+            daily_limit = int(row.get('daily_limit') or 0)
+            # Warmup hesabı
+            warmup_limit = 0
+            if row.get('warmup_enabled') and row.get('warmup_start_date'):
+                start = row['warmup_start_date']
+                if isinstance(start, str):
+                    start = datetime.date.fromisoformat(start)
+                day = (datetime.date.today() - start).days + 1
+                if   day <= 0:  warmup_limit = 50
+                elif day <= 3:  warmup_limit = 50
+                elif day <= 7:  warmup_limit = 100
+                elif day <= 14: warmup_limit = 200
+                elif day <= 21: warmup_limit = 400
+            sc = {'daily_limit': daily_limit, 'warmup_limit': warmup_limit}
+            _sender_cache[sender_id] = sc
+        daily_limit  = sc['daily_limit']
+        warmup_limit = sc['warmup_limit']
+    else:
+        daily_limit  = get_sender_daily_limit(sender_id)
+        warmup_limit = get_warmup_limit(sender_id)
+
+    if daily_limit > 0 or warmup_limit > 0:
+        # sent_today önbellekten al veya say
+        if _sent_today_cache is not None:
+            sent_today = _sent_today_cache.get(sender_id, 0)
+        else:
+            sent_today = get_sender_sent_today(sender_id)
+        if daily_limit > 0 and sent_today >= daily_limit:
+            return False, f"Günlük limit aşıldı: {sent_today}/{daily_limit} mail gönderildi (UTC gece sıfırlanır)"
+        if warmup_limit > 0 and sent_today >= warmup_limit:
+            return False, f"Warmup limiti aşıldı: bugün {sent_today}/{warmup_limit} mail gönderildi (plan devam ediyor)"
+
+    # ── 3. Kullanıcı kuralı — önbellekten al
+    if user_id:
+        if _user_rule_cache is not None:
+            if user_id not in _user_rule_cache:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "SELECT * FROM send_rules WHERE user_id=%s AND is_active=1 ORDER BY min_interval_h DESC LIMIT 1",
+                        (user_id,)
+                    )
+                    _user_rule_cache[user_id] = cur.fetchone()
+            user_rule = _user_rule_cache[user_id]
+        else:
+            user_rule = get_user_rules(user_id)
+
+        if user_rule and user_rule['min_interval_h'] > 0:
+            with conn.cursor() as cur:
+                cur.execute("""SELECT sent_at FROM send_log
+                               WHERE recipient=%s AND status='sent'
+                               ORDER BY sent_at DESC LIMIT 1""", (recipient,))
+                row = cur.fetchone()
+            last_u = row['sent_at'] if row else None
+            if last_u is not None:
+                delta_u = datetime.datetime.now() - last_u
+                hours_u = delta_u.total_seconds() / 3600
+                if hours_u < user_rule['min_interval_h']:
+                    remaining_u = user_rule['min_interval_h'] - hours_u
+                    return False, (
+                        f"Kullanici kurali ({user_rule['name']}): "
+                        f"{remaining_u:.1f} saat sonra gonderilebilir "
+                        f"(son: {last_u.strftime('%d.%m.%Y %H:%M')})"
+                    )
+
+    # ── 4. Gönderici bazlı min_interval kontrolü
+    if min_interval_h == 0:
+        return True, None
+
+    with conn.cursor() as cur:
+        cur.execute("""SELECT sent_at FROM send_log
+                       WHERE sender_id=%s AND recipient=%s AND status='sent'
+                       ORDER BY sent_at DESC LIMIT 1""",
+                    (sender_id, recipient))
+        row = cur.fetchone()
+
+    if row is None:
+        return True, None
+
+    delta = datetime.datetime.now() - row['sent_at']
+    hours_passed = delta.total_seconds() / 3600
+    if hours_passed >= min_interval_h:
+        return True, None
+
+    remaining = min_interval_h - hours_passed
+    return False, f"{remaining:.1f} saat sonra gönderilebilir (son: {row['sent_at'].strftime('%d.%m.%Y %H:%M')})"
+
+
+def load_suppression_set():
+    """
+    Tüm suppression listesi ve domain listesini belleğe yükler.
+    Bulk gönderim başlangıcında bir kez çağrılır.
+    Döner: set (email adresleri + domainler — hepsi lowercase)
+    """
+    conn = get_connection()
+    try:
+        result = set()
+        with conn.cursor() as cur:
+            cur.execute("SELECT email FROM suppression_list")
+            for r in cur.fetchall():
+                result.add(r['email'].lower())
+            cur.execute("SELECT domain FROM suppression_domains")
+            for r in cur.fetchall():
+                result.add(r['domain'].lower())
+        return result
+    except Exception:
+        return set()
+    finally:
+        conn.close()
+
+
+def log_send_bulk(rows):
+    """
+    Birden fazla send_log kaydını tek bağlantıda toplu INSERT eder.
+    rows: list of dict — her dict log_send ile aynı parametreleri içerir.
+    Bulk gönderim loopunda her mail sonrası biriktirip toplu atmak için.
+    """
+    if not rows:
+        return
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.executemany(
+                """INSERT INTO send_log
+                    (sender_id, rule_id, recipient, subject, status, error_msg,
+                     message_id, provider, sent_by_user_id, sent_by_username, body_html)
+                   VALUES (%(sender_id)s, %(rule_id)s, %(recipient)s, %(subject)s,
+                           %(status)s, %(error_msg)s, %(message_id)s, %(provider)s,
+                           %(user_id)s, %(username)s, %(body_html)s)""",
+                rows
+            )
+        conn.commit()
+    except Exception as e:
+        print(f"Bulk log hatası: {e}")
+        conn.rollback()
+    finally:
+        conn.close()
+
+def can_send(sender_id, recipient, min_interval_h, user_id=None):
     """
     Gönderimin yapılıp yapılamayacağını kontrol eder.
     Sırasıyla:
       1. Suppression listesi kontrolü (bounce/şikayet/abonelik iptal)
-      2. min_interval_h=0 ise kısıtsız izin
-      3. Son gönderimden yeterli saat geçmiş mi kontrolü
+      2. Günlük kota kontrolü (daily_limit > 0 ise)
+      3. min_interval_h=0 ise kısıtsız izin
+      4. Son gönderimden yeterli saat geçmiş mi kontrolü (gönderici bazlı)
     Döner: (True, None) veya (False, neden_string)
     """
     # Suppression kontrolü — listede varsa asla gönderme
     if is_suppressed(recipient):
         return False, "Bu e-posta adresi bastırma listesinde (bounce, complaint veya unsubscribe)"
 
-    # Sıfır saat = kısıtlama yok, her zaman gönderebilir
+    # Günlük kota ve warmup kontrolü — sent_today tek sorguda alınır
+    # Günlük kota kontrolü
+    daily_limit  = get_sender_daily_limit(sender_id)
+    # Warmup plan kontrolü — daily_limit'ten bağımsız, daha kısıtlayıcı olabilir
+    warmup_limit = get_warmup_limit(sender_id)
+    if daily_limit > 0 or warmup_limit > 0:
+        sent_today = get_sender_sent_today(sender_id)
+        if daily_limit > 0 and sent_today >= daily_limit:
+            return False, f"Günlük limit aşıldı: {sent_today}/{daily_limit} mail gönderildi (UTC gece sıfırlanır)"
+        if warmup_limit > 0 and sent_today >= warmup_limit:
+            return False, f"Warmup limiti aşıldı: bugün {sent_today}/{warmup_limit} mail gönderildi (plan devam ediyor)"
+
+
+    # Kullanici bazli kural kontrolu — tum gondericilerden bagimsiz
+    if user_id:
+        user_rule = get_user_rules(user_id)
+        if user_rule and user_rule['min_interval_h'] > 0:
+            last_u = get_last_sent_any_sender(recipient)
+            if last_u is not None:
+                delta_u = datetime.datetime.now() - last_u
+                hours_u = delta_u.total_seconds() / 3600
+                if hours_u < user_rule['min_interval_h']:
+                    remaining_u = user_rule['min_interval_h'] - hours_u
+                    return False, (
+                        f"Kullanici kurali ({user_rule['name']}): "
+                        f"{remaining_u:.1f} saat sonra gonderilebilir "
+                        f"(son: {last_u.strftime('%d.%m.%Y %H:%M')})"
+                    )
+
+    # Sifir saat = kisitlama yok, her zaman gonderebilir
     if min_interval_h == 0:
         return True, None
 
@@ -1013,28 +1590,42 @@ def can_send(sender_id, recipient, min_interval_h):
     remaining = min_interval_h - hours_passed
     return False, f"{remaining:.1f} saat sonra gönderilebilir (son: {last.strftime('%d.%m.%Y %H:%M')})" 
 
-def get_send_log(page=1, per_page=50, sender_id=None, status=None, search=None):
-
-    """Gönderim loglarını filtreli ve sayfalı döner."""
+def get_send_log(page=1, per_page=50, sender_id=None, status=None, search=None, date_from=None, date_to=None):
+    """
+    Gönderim loglarını filtreli ve sayfalı döner.
+    Filtreler opsiyoneldir — verilmeyenler sorguya dahil edilmez.
+    Döner: (kayıtlar_listesi, toplam_kayıt_sayısı)
+    """
     conn = get_connection()
     try:
         with conn.cursor() as cur:
             wheres, params = [], []
-            if sender_id: 
+            # Dinamik WHERE koşulları — sadece verilen filtreler eklenir
+            if sender_id:
                 wheres.append("l.sender_id=%s")
                 params.append(sender_id)
-            if status:    
+            if status:
                 wheres.append("l.status=%s")
                 params.append(status)
-            if search:    
+            if search:
                 wheres.append("l.recipient LIKE %s")
                 params.append(f'%{search}%')
-            
+            if date_from:
+                # sent_at UTC kayıtlı, tarih filtresi lokal (TR=UTC+3) — UTC'ye çevir
+                # date_from 00:00:00 TR = date_from - 1 gün 21:00:00 UTC
+                wheres.append("l.sent_at >= CONVERT_TZ(%s, '+03:00', '+00:00')")
+                params.append(date_from + ' 00:00:00')
+            if date_to:
+                # date_to 23:59:59 TR = date_to 20:59:59 UTC
+                wheres.append("l.sent_at <= CONVERT_TZ(%s, '+03:00', '+00:00')")
+                params.append(date_to + ' 23:59:59')
+
             where_clause = ('WHERE ' + ' AND '.join(wheres)) if wheres else ''
-            
+
+            # Önce toplam sayıyı al (sayfalama için), sonra sayfalı veriyi getir
             cur.execute(f"SELECT COUNT(*) as cnt FROM send_log l {where_clause}", params)
             total = cur.fetchone()['cnt']
-            
+
             offset = (page-1)*per_page
             cur.execute(f"""SELECT l.*, s.name as sender_name, s.sender_mode, s.api_host FROM send_log l
                             LEFT JOIN senders s ON l.sender_id=s.id
@@ -1065,6 +1656,54 @@ def clear_send_log(sender_id=None):
     except Exception as e:
         conn.rollback()
         return False, str(e)
+    finally:
+        conn.close()
+
+
+def get_failed_logs(log_ids=None, limit=500):
+    """
+    Başarısız (status='failed') send_log kayıtlarını döner.
+    log_ids verilirse sadece o ID'leri getirir, aksi halde tüm failed kayıtları.
+    limit: maksimum kayıt sayısı.
+    """
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            if log_ids:
+                fmt = ','.join(['%s'] * len(log_ids))
+                cur.execute(
+                    f"SELECT * FROM send_log WHERE id IN ({fmt}) AND status='failed' LIMIT %s",
+                    log_ids + [limit]
+                )
+            else:
+                cur.execute(
+                    "SELECT * FROM send_log WHERE status='failed' ORDER BY sent_at DESC LIMIT %s",
+                    (limit,)
+                )
+            return cur.fetchall() or []
+    except Exception as e:
+        print(f"get_failed_logs hatası: {e}")
+        return []
+    finally:
+        conn.close()
+
+
+def update_log_status(log_id, status, error_msg=None):
+    """
+    Belirli bir send_log kaydının durumunu günceller.
+    retry_failed_sends() tarafından kullanılır.
+    """
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE send_log SET status=%s, error_msg=%s, sent_at=UTC_TIMESTAMP() WHERE id=%s",
+                (status, error_msg, log_id)
+            )
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"update_log_status hatası: {e}")
     finally:
         conn.close()
 
@@ -1109,6 +1748,9 @@ def get_log_summary():
                     SUM(CASE WHEN status='failed'
                              AND DATE(sent_at)=DATE(UTC_TIMESTAMP())
                         THEN 1 ELSE 0 END) as failed_today,
+                    SUM(CASE WHEN status='skipped'
+                             AND DATE(sent_at)=DATE(UTC_TIMESTAMP())
+                        THEN 1 ELSE 0 END) as skipped_today,
                     -- Son gönderim
                     MAX(sent_at) as last_sent_at,
                     -- Kaç farklı gönderici kullanıldı
@@ -1134,10 +1776,11 @@ def get_log_summary():
                 'failed_month':  int(r['failed_month'] or 0),
                 'skipped_month': int(r['skipped_month']or 0),
                 'success_pct_month': pct(r['sent_month'], r['total_month']),
-                'total_today':   int(r['total_today']  or 0),
-                'sent_today':    int(r['sent_today']   or 0),
-                'failed_today':  int(r['failed_today'] or 0),
-                'sender_count':  int(r['sender_count'] or 0),
+                'total_today':   int(r['total_today']   or 0),
+                'sent_today':    int(r['sent_today']    or 0),
+                'failed_today':  int(r['failed_today']  or 0),
+                'skipped_today': int(r['skipped_today'] or 0),
+                'sender_count':  int(r['sender_count']  or 0),
                 'last_sent_at':  r['last_sent_at'].strftime('%d.%m.%Y %H:%M') if r['last_sent_at'] else None,
             }
     except Exception as e:
@@ -1148,7 +1791,14 @@ def get_log_summary():
 
 
 def get_sender_monthly_stats():
-    """Her gönderici için bu ayki ve toplam gönderim istatistiklerini döner."""
+    """
+    Her gönderici için bu ayki ve toplam gönderim istatistiklerini döner.
+
+    Tek sorguda tüm göndericilerin hem genel hem aylık istatistiklerini çeker.
+    Döner: {sender_id: {total_all, sent_all, failed_all, total_month, sent_month,
+                        failed_month, skipped_month, sent_today, last_sent_at}}
+    None değerleri 0'a normalize edilir — yeni göndericiler için boş satırlar olabilir.
+    """
     conn = get_connection()
     try:
         with conn.cursor() as cur:
@@ -1177,11 +1827,17 @@ def get_sender_monthly_stats():
                         YEAR(sent_at) = YEAR(UTC_TIMESTAMP()) AND
                         MONTH(sent_at) = MONTH(UTC_TIMESTAMP())
                         THEN 1 ELSE 0 END) as skipped_month,
+                    SUM(CASE WHEN
+                        status='sent' AND
+                        DATE(sent_at) = DATE(UTC_TIMESTAMP())
+                        THEN 1 ELSE 0 END) as sent_today,
                     MAX(sent_at) as last_sent_at
                 FROM send_log
                 GROUP BY sender_id
             """)
             rows = cur.fetchall()
+            # Sonuçları sender_id → istatistik dict formatına dönüştür
+            # None değerleri 0'a normalize et (yeni göndericiler için boş satırlar olabilir)
             result = {}
             for r in rows:
                 result[r['sender_id']] = {
@@ -1192,6 +1848,7 @@ def get_sender_monthly_stats():
                     'sent_month':   int(r['sent_month'] or 0),
                     'failed_month': int(r['failed_month'] or 0),
                     'skipped_month':int(r['skipped_month'] or 0),
+                    'sent_today':   int(r['sent_today'] or 0),
                     'last_sent_at': r['last_sent_at'].strftime('%d.%m.%Y %H:%M') if r['last_sent_at'] else None,
                 }
             return result
@@ -1246,6 +1903,8 @@ def list_user_tables():
                 ORDER BY table_name
             """, (db_name,))
             rows = cur.fetchall()
+            # Sistem tablolarını filtrele — kullanıcı yanlışlıkla send_log gibi
+            # tablolara mail göndermesin
             tnames = [
                 _row_get(r, 'table_name')
                 for r in rows
@@ -1370,13 +2029,15 @@ def get_table_valid_counts(table_name):
     conn = get_connection()
     try:
         with conn.cursor() as cur:
+            # Önce is_valid kolonu var mı kontrol et — yoksa doğrulama yapılmamış demektir
             cur.execute(
                 "SELECT COUNT(*) as cnt FROM information_schema.columns "
                 "WHERE table_schema=DATABASE() AND table_name=%s AND column_name='is_valid'",
                 (table_name,)
             )
             if cur.fetchone()['cnt'] == 0:
-                return None  # kolon yok
+                return None  # Kolon yok — tablo henüz verify edilmemiş
+            # is_valid değerlerine göre dağılım: 1=geçerli, 0=geçersiz, -1=riskli, NULL=bekliyor
             cur.execute(f"""
                 SELECT
                     SUM(CASE WHEN is_valid = 1    THEN 1 ELSE 0 END) as valid_count,
@@ -1401,8 +2062,19 @@ def get_table_valid_counts(table_name):
 
 def import_excel_to_table(df, table_name, column_mappings, action='new'):
 
-    """Excel dosyasındaki veriyi DB tablosuna aktarır."""
+    """
+    Excel dosyasındaki veriyi DB tablosuna aktarır.
+
+    action değerleri:
+        'new'           → Tablo yoksa oluştur, veriyi yükle
+        'overwrite'     → Mevcut tabloyu DROP edip yeniden oluştur
+        'append'        → Mevcut tabloya olduğu gibi ekle (duplicate kontrolü yok)
+        'append_dedupe' → Mevcut tabloda bulunmayan satırları ekle (duplicate atla)
+
+    Döner: (True, eklenen_satır_sayısı, None) veya (False, 0, hata_metni)
+    """
     try:
+        # SQL injection koruması — tablo ve kolon adları whitelist doğrulamasından geçmeli
         from security import safe_identifier
         safe_identifier(table_name)
         for col in column_mappings.values():
@@ -1411,28 +2083,33 @@ def import_excel_to_table(df, table_name, column_mappings, action='new'):
         return False, 0, str(e)
     conn = get_connection()
     try:
-        df = df.replace({pd.NA: None, float('nan'): None})
+        df = df.replace({pd.NA: None, float('nan'): None})  # NaN → None (MySQL NULL)
         
         with conn.cursor() as cur:
             exists, _ = table_exists(table_name)
             
             if action == 'overwrite' and exists:
+                # Mevcut tabloyu tamamen sil ve yeniden oluştur
                 cur.execute(f"DROP TABLE IF EXISTS `{table_name}`")
                 exists = False
             
             if not exists:
+                # Tablo yoksa DataFrame sütunlarından şema oluştur
                 create_table_sql = generate_create_table_sql(table_name, df, column_mappings)
                 cur.execute(create_table_sql)
             
             db_columns = list(column_mappings.values())
             
             if action == 'append_dedupe' and exists:
+                # Tekrar içermeyen ekleme: önce geçici tabloya yükle,
+                # sonra mevcut tabloda olmayan satırları INSERT INTO ... SELECT ile taşı
                 temp_table = f"temp_{table_name}_{int(time.time())}"
                 insert_temp_data_sql = generate_create_table_sql(temp_table, df, column_mappings)
                 cur.execute(insert_temp_data_sql)
 
                 insert_data(cur, temp_table, df, column_mappings)
                 
+                # Tüm kolon eşleşmesi üzerinden NOT EXISTS ile duplicate tespiti
                 join_conditions = ' AND '.join([f"t.`{col}` = m.`{col}`" for col in db_columns])
                 
                 cur.execute(f"""
@@ -1446,8 +2123,9 @@ def import_excel_to_table(df, table_name, column_mappings, action='new'):
                 """)
                 inserted = cur.rowcount
                 
-                cur.execute(f"DROP TABLE `{temp_table}`")
+                cur.execute(f"DROP TABLE `{temp_table}`")  # Geçici tabloyu temizle
             else:
+                # Yeni tablo veya düz ekleme (append) — direkt veri yükle
                 inserted = insert_data(cur, table_name, df, column_mappings)
             
             conn.commit()
@@ -1671,24 +2349,40 @@ def queue_create(name, sender_id, rule_id, source_type, email_col, var_cols,
                  subject_tpl, body_tpl, html_mode, include_unsub, delay_ms,
                  batch_size, batch_wait_min,
                  source_table=None, source_excel=None,
-                 attachment_name=None, attachment_data=None):
-    """Kuyruğa yeni görev ekler, görev ID döner."""
+                 attachment_name=None, attachment_data=None,
+                 subject_b=None, ab_test=False, ab_ratio=50,
+                 filter_role=False, filter_disposable=True):
+    """
+    Kuyruğa yeni toplu gönderim görevi ekler, görev ID döner.
+
+    source_type: 'db' (DB tablosundan) | 'excel' (Excel'den, base64 binary)
+    ab_test    : A/B konu testi — True ise ab_ratio oranında subject_b gönderilir
+    ab_ratio   : A/B testinde B grubunun yüzdesi (0-100)
+    filter_role      : True ise noreply@, info@ gibi rol adresleri atlanır
+    filter_disposable: True ise geçici/tek kullanımlık adresler atlanır
+    """
     conn = get_connection()
     try:
         with conn.cursor() as cur:
+            # status='pending' ve next_run_at=UTC_TIMESTAMP() — worker ilk döngüde yakalar
             cur.execute("""
                 INSERT INTO send_queue
                     (name, sender_id, rule_id, source_type, source_table, source_excel,
                      email_col, var_cols, subject_tpl, body_tpl, html_mode, include_unsub,
                      delay_ms, attachment_name, attachment_data,
-                     batch_size, batch_wait_min, status, next_run_at)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'pending',UTC_TIMESTAMP())
+                     batch_size, batch_wait_min,
+                     subject_b, ab_test, ab_ratio,
+                     filter_role, filter_disposable,
+                     status, next_run_at)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'pending',UTC_TIMESTAMP())
             """, (name, sender_id, rule_id, source_type, source_table,
                   source_excel, email_col, var_cols, subject_tpl, body_tpl,
                   int(html_mode), int(include_unsub), delay_ms,
                   attachment_name, attachment_data,
-                  batch_size, batch_wait_min))
-            qid = cur.lastrowid
+                  batch_size, batch_wait_min,
+                  subject_b or None, int(ab_test), int(ab_ratio),
+                  int(filter_role), int(filter_disposable)))
+            qid = cur.lastrowid  # Oluşturulan kuyruk görevi ID'si
         conn.commit()
         return qid
     finally:
@@ -1990,6 +2684,43 @@ def user_set_theme(uid: int, theme: str):
         conn.close()
 
 
+def user_prefs_get(user_id: int) -> dict:
+    """Kullanıcının kayıtlı tercihlerini JSON'dan dict olarak döner. Hata / kayıt yoksa {}."""
+    import json
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT user_prefs FROM users WHERE id=%s", (user_id,))
+            row = cur.fetchone()
+        if row and row.get('user_prefs'):
+            return json.loads(row['user_prefs'])
+        return {}
+    except Exception:
+        return {}
+    finally:
+        conn.close()
+
+
+def user_prefs_set(user_id: int, prefs: dict) -> bool:
+    """Kullanıcının tercihlerini JSON olarak kaydeder. Döner: True | False."""
+    import json
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE users SET user_prefs=%s WHERE id=%s",
+                (json.dumps(prefs, ensure_ascii=False), user_id)
+            )
+        conn.commit()
+        return True
+    except Exception as e:
+        print(f"user_prefs_set hatası: {e}")
+        conn.rollback()
+        return False
+    finally:
+        conn.close()
+
+
 # ══════════════════════════════════════════════════════════════════════
 #  SES BOUNCE / COMPLAINT BİLDİRİMLERİ
 # ══════════════════════════════════════════════════════════════════════
@@ -2268,6 +2999,259 @@ def export_verified_table(source_table, new_table_name, include_risky=False):
         return True, row_count
 
     except Exception as e:
+        return False, str(e)
+    finally:
+        conn.close()
+
+
+def get_verified_tables(prefix='mail_list_'):
+    """
+    Belirtilen prefix ile baslayan tum kullanici tablolarini listeler.
+    Tablo yapisi: id, Mail, created_at, is_valid
+    """
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SHOW TABLES")
+            all_tables = []
+            for r in cur.fetchall():
+                name = list(r.values())[0] if isinstance(r, dict) else list(r)[0]
+                all_tables.append(name)
+
+            tnames = [
+                t for t in all_tables
+                if t not in _SYSTEM_TABLES
+                and (not prefix or t.lower().startswith(prefix.lower()))
+            ]
+
+        result = []
+        for tname in tnames:
+            try:
+                with conn.cursor() as cur:
+                    cur.execute(f"""
+                        SELECT
+                            COUNT(*)               AS total,
+                            SUM(is_valid = 1)      AS valid,
+                            SUM(is_valid = -1)     AS risky
+                        FROM `{tname}`
+                    """)
+                    row = cur.fetchone()
+                    result.append({
+                        'name':         tname,
+                        'total':        int(row['total'] or 0),
+                        'valid':        int(row['valid'] or 0),
+                        'risky':        int(row['risky'] or 0),
+                        'has_is_valid': True,
+                    })
+            except Exception:
+                # is_valid kolonu yoksa sadece toplam al
+                try:
+                    with conn.cursor() as cur:
+                        cur.execute(f"SELECT COUNT(*) AS total FROM `{tname}`")
+                        row = cur.fetchone()
+                        result.append({
+                            'name':         tname,
+                            'total':        int(row['total'] or 0),
+                            'valid':        0,
+                            'risky':        0,
+                            'has_is_valid': False,
+                        })
+                except Exception:
+                    pass
+
+        return True, result
+    except Exception as e:
+        return False, str(e)
+    finally:
+        conn.close()
+
+
+def _get_email_col(cur, db_name, table_name):
+    """Tablodaki email kolonunu tespit eder."""
+    cur.execute("""
+        SELECT column_name FROM information_schema.columns
+        WHERE table_schema=%s AND table_name=%s
+        ORDER BY ordinal_position
+    """, (db_name, table_name))
+    cols = [r['column_name'] for r in cur.fetchall()]
+    for candidate in ['email', 'e-posta', 'eposta', 'mail', 'Email', 'EMAIL']:
+        if candidate in cols:
+            return candidate
+    # ilk VARCHAR/TEXT kolonu
+    cur.execute("""
+        SELECT column_name FROM information_schema.columns
+        WHERE table_schema=%s AND table_name=%s
+        AND data_type IN ('varchar','text')
+        ORDER BY ordinal_position LIMIT 1
+    """, (db_name, table_name))
+    r = cur.fetchone()
+    return r['column_name'] if r else None
+
+
+def _ensure_merge_table(cur, table_name):
+    """Birleştirme hedef tablosunu yoksa oluşturur."""
+    cur.execute(f"""
+        CREATE TABLE IF NOT EXISTS `{table_name}` (
+            id        INT AUTO_INCREMENT PRIMARY KEY,
+            email     VARCHAR(500) NOT NULL,
+            source    VARCHAR(200) COMMENT 'Kaynak tablo',
+            is_valid  TINYINT DEFAULT 1,
+            merged_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE KEY uq_email (email(191))
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    """)
+
+
+def merge_verified_tables(target_valid, source_tables, target_risky=None):
+    """
+    mail_list_ tablolarini iki ayri hedefe birlestir.
+    Kaynak tablo yapisi: id, Mail, created_at, is_valid
+    Hedef tablolar: email (UNIQUE), source, is_valid, merged_at
+    Tekrar eden email adresleri UNIQUE KEY ile otomatik atlanir.
+    """
+    try:
+        from security import safe_identifier
+        safe_identifier(target_valid)
+        if target_risky:
+            safe_identifier(target_risky)
+        for t in source_tables:
+            safe_identifier(t)
+    except ValueError as e:
+        return False, str(e)
+
+    for t in ([target_valid] + ([target_risky] if target_risky else [])):
+        if t in _SYSTEM_TABLES:
+            return False, f"'{t}' sistem tablosu adidir, kullanilamaz."
+
+    CREATE_SQL = """
+        CREATE TABLE IF NOT EXISTS `{name}` (
+            id        INT AUTO_INCREMENT PRIMARY KEY,
+            email     VARCHAR(500) NOT NULL,
+            source    VARCHAR(200) COMMENT 'Kaynak tablo',
+            is_valid  TINYINT DEFAULT 1,
+            merged_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE KEY uq_email (email(191))
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    """
+
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(CREATE_SQL.format(name=target_valid))
+            if target_risky:
+                cur.execute(CREATE_SQL.format(name=target_risky))
+
+        valid_inserted = valid_skipped = 0
+        risky_inserted = risky_skipped = 0
+        skipped_tables = []
+
+        # Email kolon adı adayları
+        EMAIL_CANDIDATES = ['Mail', 'mail', 'email', 'Email', 'EMAIL', 'e-posta', 'eposta']
+
+        for src_table in source_tables:
+            # Email kolonunu bul
+            with conn.cursor() as cur:
+                cur.execute(f"SELECT * FROM `{src_table}` LIMIT 0")
+                col_names = [d[0] for d in cur.description]
+
+            email_col = next((c for c in EMAIL_CANDIDATES if c in col_names), None)
+            if not email_col:
+                skipped_tables.append(src_table)
+                continue
+
+            # is_valid kolonu var mi?
+            has_is_valid = 'is_valid' in col_names
+
+            with conn.cursor() as cur:
+                if has_is_valid:
+                    # Geçerlileri ekle
+                    cur.execute(f"""
+                        INSERT INTO `{target_valid}` (email, source, is_valid)
+                        SELECT LOWER(TRIM(`{email_col}`)), %s, 1
+                        FROM `{src_table}`
+                        WHERE is_valid = 1
+                          AND `{email_col}` IS NOT NULL
+                          AND TRIM(`{email_col}`) != ''
+                        ON DUPLICATE KEY UPDATE source = VALUES(source)
+                    """, (src_table,))
+                    ins = cur.rowcount
+                    # ON DUPLICATE KEY: rowcount=1 insert, 2=update, 0=no change
+                    # Gerçek insert sayısını almak için:
+                    cur.execute(f"SELECT COUNT(*) AS c FROM `{src_table}` WHERE is_valid = 1")
+                    src_v = cur.fetchone()['c']
+                    valid_inserted += ins
+                    valid_skipped  += max(0, src_v - ins)
+
+                    # Risklileri ekle
+                    if target_risky:
+                        cur.execute(f"""
+                            INSERT INTO `{target_risky}` (email, source, is_valid)
+                            SELECT LOWER(TRIM(`{email_col}`)), %s, -1
+                            FROM `{src_table}`
+                            WHERE is_valid = -1
+                              AND `{email_col}` IS NOT NULL
+                              AND TRIM(`{email_col}`) != ''
+                            ON DUPLICATE KEY UPDATE source = VALUES(source)
+                        """, (src_table,))
+                        r_ins = cur.rowcount
+                        cur.execute(f"SELECT COUNT(*) AS c FROM `{src_table}` WHERE is_valid = -1")
+                        src_r = cur.fetchone()['c']
+                        risky_inserted += r_ins
+                        risky_skipped  += max(0, src_r - r_ins)
+                else:
+                    # is_valid yoksa tümünü geçerli say
+                    cur.execute(f"""
+                        INSERT INTO `{target_valid}` (email, source, is_valid)
+                        SELECT LOWER(TRIM(`{email_col}`)), %s, 1
+                        FROM `{src_table}`
+                        WHERE `{email_col}` IS NOT NULL
+                          AND TRIM(`{email_col}`) != ''
+                        ON DUPLICATE KEY UPDATE source = VALUES(source)
+                    """, (src_table,))
+                    valid_inserted += cur.rowcount
+
+        conn.commit()
+        return True, {
+            'valid_inserted': valid_inserted,
+            'valid_skipped':  valid_skipped,
+            'risky_inserted': risky_inserted,
+            'risky_skipped':  risky_skipped,
+            'skipped_tables': skipped_tables,
+        }
+    except Exception as e:
+        conn.rollback()
+        return False, str(e)
+    finally:
+        conn.close()
+
+
+def drop_user_tables(table_names):
+    """
+    Kullanici tablolarini siler. Sistem tablolari korunur.
+    Doner: (True, {'dropped': [...], 'protected': [...]})
+            veya (False, hata_metni)
+    """
+    dropped   = []
+    protected = []
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            for tname in table_names:
+                if tname in _SYSTEM_TABLES:
+                    protected.append(tname)
+                    continue
+                try:
+                    from security import safe_identifier
+                    safe_identifier(tname)
+                except ValueError:
+                    protected.append(tname)
+                    continue
+                cur.execute(f"DROP TABLE IF EXISTS `{tname}`")
+                dropped.append(tname)
+        conn.commit()
+        return True, {'dropped': dropped, 'protected': protected}
+    except Exception as e:
+        conn.rollback()
         return False, str(e)
     finally:
         conn.close()
@@ -2571,14 +3555,16 @@ def template_get(tpl_id):
         conn.close()
 
 
-def template_create(tpl_type, name, content):
+def template_create(tpl_type, name, content, is_default=False):
     """Yeni şablon oluşturur, yeni ID'yi döner."""
     conn = get_connection()
     try:
         with conn.cursor() as cur:
+            if is_default:
+                cur.execute("UPDATE mail_templates SET is_default=0 WHERE type=%s", (tpl_type,))
             cur.execute(
-                "INSERT INTO mail_templates (type, name, content) VALUES (%s,%s,%s)",
-                (tpl_type, name.strip(), content)
+                "INSERT INTO mail_templates (type, name, content, is_default) VALUES (%s,%s,%s,%s)",
+                (tpl_type, name.strip(), content, 1 if is_default else 0)
             )
             new_id = cur.lastrowid
         conn.commit()
@@ -2590,23 +3576,50 @@ def template_create(tpl_type, name, content):
         conn.close()
 
 
-def template_update(tpl_id, name=None, content=None):
+def template_update(tpl_id, name=None, content=None, is_default=None):
     """Şablonu günceller."""
     fields, vals = [], []
-    if name    is not None: fields.append("name=%s");    vals.append(name.strip())
-    if content is not None: fields.append("content=%s"); vals.append(content)
+    if name       is not None: fields.append("name=%s");       vals.append(name.strip())
+    if content    is not None: fields.append("content=%s");    vals.append(content)
+    if is_default is not None: fields.append("is_default=%s"); vals.append(1 if is_default else 0)
     if not fields:
         return False, "Güncellenecek alan yok."
     vals.append(tpl_id)
     conn = get_connection()
     try:
         with conn.cursor() as cur:
+            if is_default:
+                # Önce aynı tipteki diğer varsayılanları sıfırla
+                cur.execute("SELECT type FROM mail_templates WHERE id=%s", (tpl_id,))
+                row = cur.fetchone()
+                if row:
+                    cur.execute("UPDATE mail_templates SET is_default=0 WHERE type=%s", (row['type'],))
             cur.execute(f"UPDATE mail_templates SET {','.join(fields)} WHERE id=%s", vals)
         conn.commit()
         return True, "Güncellendi."
     except Exception as e:
         conn.rollback()
         return False, str(e)
+    finally:
+        conn.close()
+
+
+def template_get_defaults():
+    """Her tip için varsayılan şablonu döner: {'subject': {...}, 'body': {...}}"""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT * FROM mail_templates WHERE is_default=1 ORDER BY type"
+            )
+            rows = cur.fetchall()
+            result = {}
+            for r in rows:
+                for k in ('created_at', 'updated_at'):
+                    if isinstance(r.get(k), datetime.datetime):
+                        r[k] = r[k].isoformat()
+                result[r['type']] = r
+            return result
     finally:
         conn.close()
 
@@ -2624,3 +3637,127 @@ def template_delete(tpl_id):
         return False, str(e)
     finally:
         conn.close()
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  BOUNCE SCANNER
+# ══════════════════════════════════════════════════════════════════════
+
+def bounce_kaydet(bounce: dict) -> str:
+    """
+    Bounce kaydını bounce_adresleri tablosuna yazar.
+    Dönüş: 'yeni' | 'guncellendi'
+    """
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id, bounce_tipi FROM bounce_adresleri WHERE email=%s",
+                (bounce['email'],)
+            )
+            mevcut = cur.fetchone()
+            simdi  = datetime.datetime.now()
+
+            if not mevcut:
+                cur.execute("""
+                    INSERT INTO bounce_adresleri
+                        (email, bounce_tipi, kategori, hata_kodu, aciklama,
+                         diagnostic, suppression_ekle, ilk_gorulme, son_gorulme, adet)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 1)
+                """, (
+                    bounce['email'],
+                    bounce.get('bounce_tipi', 'kalici'),
+                    bounce.get('kategori', 'kalici'),
+                    bounce.get('hata_kodu', ''),
+                    bounce.get('aciklama', ''),
+                    bounce.get('diagnostic', ''),
+                    1 if bounce.get('suppression_ekle') else 0,
+                    simdi, simdi,
+                ))
+                conn.commit()
+                return 'yeni'
+            else:
+                # Geçici → kalıcı'ya yükselebilir, tersi olmaz
+                yeni_tip = mevcut['bounce_tipi'] if isinstance(mevcut, dict) else mevcut[1]
+                if bounce.get('bounce_tipi') == 'kalici':
+                    yeni_tip = 'kalici'
+
+                cur.execute("""
+                    UPDATE bounce_adresleri
+                    SET son_gorulme = %s,
+                        adet        = adet + 1,
+                        bounce_tipi = %s,
+                        hata_kodu   = IF(%s = 'kalici', %s, hata_kodu),
+                        aciklama    = IF(%s = 'kalici', %s, aciklama),
+                        kategori    = IF(%s = 'kalici', %s, kategori)
+                    WHERE email = %s
+                """, (
+                    simdi,
+                    yeni_tip,
+                    bounce.get('bounce_tipi', 'kalici'), bounce.get('hata_kodu', ''),
+                    bounce.get('bounce_tipi', 'kalici'), bounce.get('aciklama', ''),
+                    bounce.get('bounce_tipi', 'kalici'), bounce.get('kategori', 'kalici'),
+                    bounce['email'],
+                ))
+                conn.commit()
+                return 'guncellendi'
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def bounce_tarama_gecmisi_kaydet(hesap, okunan, bounce, yeni, guncellendi, atlanan, hata=None):
+    """Tarama özet kaydını tarama_gecmisi tablosuna yazar."""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO tarama_gecmisi
+                    (tarama_zamani, hesap, okunan_mail, bulunan_bounce,
+                     yeni_adres, guncellenen, atlanan, hata)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            """, (
+                datetime.datetime.now(),
+                hesap, okunan, bounce, yeni, guncellendi, atlanan,
+                hata[:500] if hata else None,
+            ))
+        conn.commit()
+    except Exception:
+        conn.rollback()
+    finally:
+        conn.close()
+
+
+def bounce_tarama_gecmisi_listele(limit=20) -> list:
+    """Son tarama geçmişlerini döner."""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT tarama_zamani, hesap, okunan_mail, bulunan_bounce,
+                       yeni_adres, guncellenen, atlanan, hata
+                FROM tarama_gecmisi
+                ORDER BY id DESC LIMIT %s
+            """, (limit,))
+            rows = cur.fetchall()
+            result = []
+            for r in rows:
+                row = dict(r) if isinstance(r, dict) else {
+                    'tarama_zamani': r[0], 'hesap': r[1],
+                    'okunan_mail': r[2],   'bulunan_bounce': r[3],
+                    'yeni_adres': r[4],    'guncellenen': r[5],
+                    'atlanan': r[6],       'hata': r[7],
+                }
+                if isinstance(row.get('tarama_zamani'), datetime.datetime):
+                    row['tarama_zamani'] = row['tarama_zamani'].strftime('%d.%m.%Y %H:%M')
+                result.append(row)
+            return result
+    finally:
+        conn.close()
+
+
+def suppression_add(email: str, reason: str = '', added_by: str = 'bounce_scanner'):
+    """Bounce scanner'dan çağrılan kısa yol — add_to_suppression wrapper'ı."""
+    return add_to_suppression(email, reason=reason, source=added_by)

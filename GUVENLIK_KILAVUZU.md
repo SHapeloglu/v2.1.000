@@ -71,7 +71,7 @@ server {
 
     # Flask uygulamasına yönlendir
     location / {
-        proxy_pass http://127.0.0.1:5000;
+        proxy_pass http://127.0.0.1:5002;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -129,9 +129,9 @@ EC2 konsolundan şu portların açık olduğundan emin olun:
 | 22 | TCP | Sadece kendi IP'niz | SSH erişimi |
 | 80 | TCP | 0.0.0.0/0 | HTTP → HTTPS yönlendirme |
 | 443 | TCP | 0.0.0.0/0 | HTTPS |
-| 5000 | TCP | **Kapalı tutun** | Flask direkt erişim olmamalı |
+| 5002 | TCP | **Kapalı tutun** | Flask direkt erişim olmamalı |
 
-**Flask'ı 5000 portunda dışarıya açmayın.** Nginx üzerinden 443'ten erişin.
+**Flask'ı 5002 portunda dışarıya açmayın.** Nginx üzerinden 443'ten erişin.
 
 ---
 
@@ -158,23 +158,128 @@ Root kullanıcıyla bağlanmayın.
 
 ---
 
+## Bounce Scanner Güvenlik Notları
+
+Bounce Scanner, SMTP gönderici hesabının **IMAP kimlik bilgileriyle** bağlantı kurar.
+
+### IMAP Şifresi
+- Bounce Scanner ayrı bir şifre saklamaz — SMTP göndericisinin şifresini kullanır
+- Bu şifre veritabanında **Fernet ile şifreli** saklanır (diğer SMTP şifreleriyle aynı koruma)
+- IMAP bağlantısı varsayılan olarak **SSL/TLS** (port 993) ile yapılır
+
+### Gmail Kullanıyorsanız
+- Normal hesap şifresi çalışmaz — **Uygulama Şifresi** oluşturmanız gerekir
+- Google hesabı → Güvenlik → 2 adımlı doğrulama açık → Uygulama Şifreleri
+- Oluşturulan 16 haneli şifreyi SMTP gönderici kaydında kullanın
+
+### İzin Verilen IP / CSRF
+- `/api/bounce-scanner/scan` endpoint'i `@login_required` ile korunuyor
+- `/api/bounce-scanner/manuel-ekle` endpoint'i rate limit (60/dk) ile korunuyor
+- `/api/suppression/batch-check` endpoint'i rate limit (20/dk) ile korunuyor
+
+### Tarama Sonuçları
+- Tarama sonuçları sunucuda saklanmaz — her taramada sıfırdan okunur
+- CSV export tarayıcıda oluşturulur, sunucuya gönderilmez
+
+---
+
 ## Kontrol Listesi
 
 - [ ] HTTPS kuruldu (Nginx + Let's Encrypt)
 - [ ] `FORCE_HTTPS=true` `.env`'de ayarlı
 - [ ] `APP_BASE_URL` HTTPS ile başlıyor
 - [ ] `SECRET_KEY` güçlü ve yedeklenmiş
-- [ ] EC2 Security Group'ta 5000 portu kapalı
+- [ ] EC2 Security Group'ta 5002 portu kapalı
 - [ ] MySQL için ayrı, sınırlı yetkili kullanıcı var
 - [ ] `.env` dosyası Git'e commit edilmemiş (`.gitignore`'a ekleyin)
 - [ ] (Opsiyonel) `DB_SSL=true` — DB ayrı sunucudaysa
 
 ---
 
+## Suppression Listesi ve Domain Bloklama — Sebep Seçiminin Etkisi
+
+Suppression sayfasında e-posta veya domain eklerken seçilen **sebep (reason), engelleme davranışını hiçbir şekilde etkilemez.**
+
+Gönderim öncesinde çalışan `is_suppressed()` kontrolü iki sorgu yapar:
+
+1. Adres `suppression_list` tablosunda var mı?
+2. Adresin domain'i `suppression_domains` tablosunda var mı?
+
+Her iki kontrolde de `reason` alanına bakılmaz. Listede bulunan her adres veya domain, sebebi ne olursa olsun **aynı şekilde engellenir.**
+
+| Özellik | Gönderimi engeller mi? | Sebep fark yaratır mı? |
+|---|---|---|
+| Manuel e-posta ekleme | ✅ Evet | ❌ Hayır |
+| Domain bloklama | ✅ Evet | ❌ Hayır |
+
+**Sebep alanı yalnızca etiketleme içindir:**
+- Listede filtreleme yapabilirsiniz (sadece bounce'ları göster vb.)
+- İstatistik sayfasında dağılımı görebilirsiniz
+- Audit logunda hangi sebeple eklendiği kayıt altına alınır
+
+**Sebepler, kaynakları ve nasıl oluştuğu:**
+
+| Sebep | Kaynak | Nasıl Eklenir |
+|---|---|---|
+| `bounce` | AWS SES/SNS webhook (`ses_sns`), Brevo webhook, Mailrelay webhook | Gönderdiğiniz mail alıcıya ulaşamazsa (posta kutusu yok, dolu, vb.) ilgili servis sunucunuza bildirim gönderir, uygulama otomatik ekler |
+| `complaint` | AWS SES/SNS webhook (`ses_sns`), Brevo webhook, Mailrelay webhook | Alıcı maili spam olarak işaretlerse ilgili servis sunucunuza bildirim gönderir, uygulama otomatik ekler |
+| `unsubscribe` | Uygulama içi (`unsubscribe` sayfası) | Alıcı maildeki "aboneliği iptal et" linkine tıklayınca otomatik eklenir |
+| `invalid` | E-posta doğrulama sistemi (`email_verify`) | Ayarlar → E-posta Doğrulama ekranında doğrulama işlemi çalıştırılınca geçersiz bulunan adresler otomatik eklenir |
+| `manual` | Suppression sayfası (elle) | Siz suppression sayfasından kendiniz eklersiniz |
+| `bounce_scanner_manuel` | Bounce Scanner sonuç ekranı | Tarama sonucunda satır seçip 'Suppression'a Ekle' butonuna basıldığında eklenir |
+
+> **Not:** `bounce` ve `complaint` için webhook'ların çalışması gerekir. AWS SNS Topic'inize `https://yourdomain.com/sns/ses-notification` adresini HTTP subscription olarak ekleyin. Uygulama `SubscriptionConfirmation` isteğini otomatik onaylar. Tanımlanmamışsa bu sebepler otomatik eklenemez.
+
+---
+
+## mail_list_ Tablolarındaki `is_valid` Alanı
+
+E-posta doğrulama çalıştırıldığında her adres için tabloya `is_valid` kolonu eklenir ve sonuç buraya yazılır.
+
+**`is_valid` değerleri:**
+
+| Değer | Anlamı | Gönderimde |
+|---|---|---|
+| `1` | Geçerli | ✅ Gönderilir |
+| `0` | Geçersiz | ❌ Atlanır |
+| `-1` | Riskli / Belirsiz | ⚠️ Varsayılan atlanır, "riskli dahil et" seçeneğiyle gönderilebilir |
+
+**Hangi durum hangi `is_valid` değerini alır:**
+
+| Durum Kodu | `is_valid` | Açıklama |
+|---|---|---|
+| `valid` | `1` | Tüm kontroller geçti |
+| `typo_fixed` | `1` | Yazım hatası düzeltildi (gmial.com → gmail.com gibi) |
+| `catch_all` | `1` | Sunucu her adrese 250 veriyor — teslim belirsiz ama geçerli sayılır |
+| `free_provider` | `1` | Gmail, Hotmail, Yahoo vb. ücretsiz servis |
+| `no_infra` | `-1` | SPF/DMARC kaydı yok — zayıf domain, bounce riski yüksek |
+| `role_account` | `-1` | Kişisel olmayan rol adresi (info@, admin@, noreply@ vb.) |
+| `unknown` | `-1` | SMTP belirsiz yanıt verdi — kesin sonuç alınamadı |
+| `invalid_format` | `0` | E-posta formatı geçersiz (RFC uyumsuz) |
+| `disposable` | `0` | Geçici/tek kullanımlık servis (mailinator.com vb.) |
+| `no_mx` | `0` | Domain için DNS/MX kaydı bulunamadı |
+| `invalid` | `0` | SMTP 550 — posta kutusu yok |
+
+**`is_valid = 0` olan adresler suppression listesine de otomatik eklenir** (`invalid` sebebiyle), bir daha gönderim denenmez.
+
+**`is_valid = -1` olan adresler** suppression'a eklenmez. Toplu gönderim ekranında "Geçersiz/riskli adresleri dahil et" seçeneğiyle bu adreslere de gönderilebilir.
+
+---
+
 ## Mevcut Kod Güvenliği Özeti
 
 - **SQL Injection**: Tüm kullanıcı girdileri parametrize sorgularla işleniyor. Tablo/sütun adları `safe_identifier()` ile whitelist doğrulamasından geçiyor.
-- **Rate Limiting**: Unsubscribe (10/dk), DB config kaydetme (5/dk), toplu gönderim (5/dk) endpoint'leri IP bazlı korumalı.
+- **Rate Limiting**: Tüm kritik endpoint'ler IP bazlı korumalı:
+
+| Endpoint | Limit |
+|---|---|
+| Unsubscribe | 10 istek/dakika |
+| DB config kaydetme | 5 istek/dakika |
+| Toplu gönderim | 5 istek/dakika |
+| Bounce Scanner tarama | 10 istek/dakika |
+| Bounce manuel ekle | 60 istek/dakika |
+| Suppression batch-check | 20 istek/dakika |
+| Suppression purge | 3 istek/dakika |
 - **Security Headers**: XSS, clickjacking, MIME sniffing koruması tüm yanıtlara ekleniyor.
 - **Token Güvenliği**: 32-byte kriptografik rastgele token, tek kullanımlık, 7 gün geçerli, DB'de expire kontrolü.
 - **Debug Modu**: Production'da `debug=False`, sadece `127.0.0.1` dinliyor.

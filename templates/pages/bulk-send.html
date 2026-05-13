@@ -1,6 +1,22 @@
 {% extends "base.html" %}
 
-{% block title %}Toplu Gönderim{% endblock %}
+{% block title %}Toplu Gönderim<!-- Template Önizleme Modal -->
+<div id="tpl-preview-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9999;align-items:center;justify-content:center">
+    <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--r2);padding:24px;max-width:680px;width:90%;max-height:80vh;overflow-y:auto;position:relative">
+        <button onclick="document.getElementById('tpl-preview-modal').style.display='none'"
+                style="position:absolute;top:12px;right:14px;background:none;border:none;font-size:20px;cursor:pointer;color:var(--muted)">✕</button>
+        <div style="font-size:14px;font-weight:700;margin-bottom:16px">👁 Şablon Önizleme <span style="font-size:11px;font-weight:400;color:var(--muted)">(ilk satır verileri kullanıldı)</span></div>
+        <div style="margin-bottom:12px">
+            <div style="font-size:11px;color:var(--muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:.05em">Konu</div>
+            <div id="tpl-preview-subject" style="padding:10px 12px;background:var(--bg);border:1px solid var(--border);border-radius:var(--r);font-size:14px"></div>
+        </div>
+        <div>
+            <div style="font-size:11px;color:var(--muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:.05em">İçerik</div>
+            <div id="tpl-preview-body" style="padding:10px 12px;background:var(--bg);border:1px solid var(--border);border-radius:var(--r);font-size:13px;line-height:1.6;white-space:pre-wrap;max-height:40vh;overflow-y:auto"></div>
+        </div>
+    </div>
+</div>
+{% endblock %}
 
 {% block content %}
 <div class="page-header">
@@ -103,7 +119,7 @@
                        border-radius:8px;padding:10px 14px;color:var(--text);
                        font-size:13px;font-family:monospace;resize:vertical;
                        box-sizing:border-box;min-height:200px"
-                oninput="updatePasteCount()"></textarea>
+                oninput="updatePasteCount(); updateDelayEstimate()"></textarea>
             <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px">
                 <span style="font-size:11px;color:var(--muted)">
                     📌 Her satır bir e-posta. Boş satırlar ve tekrar edenler otomatik temizlenir.
@@ -121,9 +137,9 @@
     <div id="src-excel-panel" style="display:none" class="fg">
         <div class="field">
             <div class="fup" onclick="document.getElementById('b-excel').click()">
-                <input type="file" id="b-excel" accept=".xlsx,.xls" onchange="previewExcel(this)">
+                <input type="file" id="b-excel" accept=".xlsx,.xls,.csv" onchange="previewExcel(this)">
                 <div class="fup-icon">📊</div>
-                <div class="fup-txt"><strong>.xlsx veya .xls dosyası seçin</strong><br><span>E-posta listesi içeren Excel dosyası</span></div>
+                <div class="fup-txt"><strong>.xlsx, .xls veya .csv dosyası seçin</strong><br><span>E-posta listesi içeren Excel dosyası</span></div>
                 <div id="b-excel-fn" class="fup-name"></div>
             </div>
             <div id="b-excel-loading" style="display:none;font-size:12px;color:var(--muted);margin-top:8px">⏳ Dosya okunuyor...</div>
@@ -147,6 +163,41 @@
                 <div style="font-size:11px;color:var(--muted);margin-bottom:5px">Aşağıya tıklayarak konu veya mesaj alanına değişken ekleyin:</div>
                 <div class="var-tags" id="b-var-tags"></div>
             </div>
+
+            <!-- ── 🧹 Metin Temizleme Paneli ── -->
+            <div id="b-clean-panel" style="margin-top:14px;padding:14px;background:var(--bg2);border-radius:var(--radius)">
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+                    <span style="font-size:13px;font-weight:500">🧹 Metin Temizleme Kuralları</span>
+                    <button type="button" class="btn btn-sm btn-accent" onclick="runCleanEmails()">Temizle &amp; Uygula</button>
+                </div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:12px;margin-bottom:8px">
+                    <label style="display:flex;align-items:center;gap:6px">
+                        <input type="checkbox" id="cl-fix-encoding" checked>
+                        <span>Unicode escape düzelt <code style="font-size:10px">u003e u0022</code></span>
+                    </label>
+                    <label style="display:flex;align-items:center;gap:6px">
+                        <input type="checkbox" id="cl-single-char" checked>
+                        <span>Tek harfli yerel kısımları kaldır</span>
+                    </label>
+                </div>
+                <div class="field" style="margin-bottom:8px">
+                    <label>Yasaklı kelimeler <span style="color:var(--muted);font-size:10px">(virgülle ayırın)</span></label>
+                    <input type="text" id="cl-banned-words" class="inp" style="margin-top:4px" value="example,test,email,your,ornek,sample,user,demo">
+                </div>
+                <div class="field" style="margin-bottom:8px">
+                    <label>Yasaklı domain uzantıları <span style="color:var(--muted);font-size:10px">(virgülle ayırın)</span></label>
+                    <input type="text" id="cl-banned-exts" class="inp" style="margin-top:4px" value=".js,.png,.jpg,.css,.gif,.svg,.ico,.woff,.ttf,.php,.asp">
+                </div>
+                <div class="field">
+                    <label>Özel kurallar <span style="color:var(--muted);font-size:10px">(her satıra bir regex veya metin)</span></label>
+                    <textarea id="cl-custom-patterns" class="inp" rows="2" style="margin-top:4px;font-family:monospace;font-size:11px" placeholder="^noreply&#10;\+[0-9]{5}@&#10;@test\."></textarea>
+                </div>
+                <div id="cl-result" style="margin-top:10px;font-size:12px;display:none">
+                    <span id="cl-clean-badge"></span>
+                    <span id="cl-removed-badge" style="margin-left:6px"></span>
+                    <button type="button" class="btn btn-sm btn-outline" style="margin-left:8px" onclick="showCleanRemoved()">Kaldırılanları gör</button>
+                </div>
+            </div>
         </div>
     </div>
 </div>
@@ -158,13 +209,81 @@
             <!-- Konu alanı — şablon seçici butonu ile -->
             <label style="display:flex;align-items:center;justify-content:space-between">
                 <span>Konu <span style="color:var(--err)">*</span></span>
-                <button type="button" class="btn btn-outline btn-sm"
-                        onclick="openTplPicker('subject')"
-                        title="Kayıtlı konulardan seç">
-                    📌 Konu Şablonu Seç
-                </button>
+                <div style="display:flex;gap:6px">
+                    <button type="button" class="btn btn-outline btn-sm"
+                            onclick="previewTemplate()"
+                            title="İlk satırdaki verilerle önizle">
+                        👁 Önizle
+                    </button>
+                    <button type="button" class="btn btn-outline btn-sm"
+                            onclick="openTplPicker('subject')"
+                            title="Kayıtlı konulardan seç">
+                        📌 Konu Şablonu Seç
+                    </button>
+                </div>
             </label>
             <input id="b-subject" placeholder="Merhaba {{Ad}}, size özel bir teklifimiz var!" onfocus="activeTarget='b-subject'">
+        </div>
+        <div class="toggle-row" style="margin-top:8px">
+            <span class="tgl-label">
+                🧪 <strong>A/B Test</strong> — listeyi ikiye böl, her yarıya farklı konu gönder
+                <span class="badge" style="background:rgba(124,111,253,.15);color:#7c6ffd">konu optimizasyonu</span>
+                <span style="font-size:11px;color:var(--muted);display:block;margin-top:2px">
+                    Aktifken aşağıda B konusu alanı açılır. Liste %50/%50 otomatik bölünür.
+                </span>
+            </span>
+            <label class="tgl"><input type="checkbox" id="b-ab-enable" onchange="toggleAbTest(this.checked)"><span class="tgl-sl"></span></label>
+        </div>
+        <div id="b-ab-wrap" style="display:none;margin-top:6px">
+            <!-- A/B Test modu seçimi -->
+            <div class="field" style="margin-bottom:8px">
+                <label style="font-size:12px;color:var(--muted)">A/B Test Modu</label>
+                <div style="display:flex;gap:10px;margin-top:6px;flex-wrap:wrap">
+                    <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer">
+                        <input type="radio" name="ab-mode" id="ab-mode-split" value="split" checked onchange="onAbModeChange()">
+                        <span>Liste %50/%50 böl</span>
+                    </label>
+                    <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer">
+                        <input type="radio" name="ab-mode" id="ab-mode-history" value="history" onchange="onAbModeChange()">
+                        <span>Geçmiş gönderim sayısına göre konu seç</span>
+                    </label>
+                </div>
+            </div>
+
+            <!-- Split modu — mevcut B konusu alanı -->
+            <div id="ab-split-section" class="field">
+                <label style="display:flex;align-items:center;gap:8px">
+                    <span>🅱 B Konusu <span style="color:var(--err)">*</span></span>
+                    <span class="badge" style="background:rgba(124,111,253,.15);color:#7c6ffd">%50 alıcıya gider</span>
+                </label>
+                <input id="b-subject-b" placeholder="Farklı bir konu başlığı deneyin..." onfocus="activeTarget='b-subject-b'">
+                <span style="font-size:11px;color:var(--muted);margin-top:4px;display:block">
+                    A konusu ilk %50'ye, B konusu son %50'ye gönderilir. Send-log'da hangi konu olduğu görünür.
+                </span>
+            </div>
+
+            <!-- History modu — geçmiş gönderim sayısına göre -->
+            <div id="ab-history-section" style="display:none">
+                <div style="font-size:12px;color:var(--muted);margin-bottom:8px">
+                    Her alıcının bu göndericiden kaç mail aldığına göre farklı konu atanır.
+                    Daha önce hiç mail almamışsa 1. konu, 1 kez almışsa 2. konu, 2+ kez almışsa 3. konu gönderilir.
+                </div>
+                <div class="field" style="margin-bottom:6px">
+                    <label style="font-size:12px">1. Konu — ilk kez mail alıyorlar <span style="color:var(--muted)">(0 önceki gönderim)</span></label>
+                    <input id="b-subject-seq-1" class="inp" placeholder="İlk tanışma konusu..." onfocus="activeTarget='b-subject-seq-1'" style="margin-top:4px">
+                </div>
+                <div class="field" style="margin-bottom:6px">
+                    <label style="font-size:12px">2. Konu — 1 kez görmüşler <span style="color:var(--muted)">(1 önceki gönderim)</span></label>
+                    <input id="b-subject-seq-2" class="inp" placeholder="Takip konusu..." onfocus="activeTarget='b-subject-seq-2'" style="margin-top:4px">
+                </div>
+                <div class="field">
+                    <label style="font-size:12px">3. Konu — 2+ kez görmüşler <span style="color:var(--muted)">(2+ önceki gönderim)</span></label>
+                    <input id="b-subject-seq-3" class="inp" placeholder="Tekrar eden kitle konusu..." onfocus="activeTarget='b-subject-seq-3'" style="margin-top:4px">
+                </div>
+                <div style="font-size:11px;color:var(--muted);margin-top:6px">
+                    💡 Boş bırakılan konular için ana konu (①) kullanılır.
+                </div>
+            </div>
         </div>
         <div class="toggle-row">
             <span class="tgl-label">HTML modu — alıcılar HTML olarak görür</span>
@@ -183,6 +302,117 @@
                 </span>
             </span>
             <label class="tgl"><input type="checkbox" id="b-mx-check" checked><span class="tgl-sl"></span></label>
+        </div>
+        <div class="toggle-row">
+            <span class="tgl-label">
+                🚫 <strong>Rol adresi filtresi</strong> — info@, admin@, noreply@, support@ gibi kişisel olmayan adresleri atla
+                <span class="badge" style="background:rgba(234,179,8,.15);color:#92400e">açılma oranı</span>
+                <span style="font-size:11px;color:var(--muted);display:block;margin-top:2px">
+                    Rol adresleri genellikle gerçek kişiye ulaşmaz, açılma oranını düşürür ve şikayet riskini artırır.
+                </span>
+            </span>
+            <label class="tgl"><input type="checkbox" id="b-filter-role"><span class="tgl-sl"></span></label>
+        </div>
+        <div class="toggle-row">
+            <span class="tgl-label">
+                🗑️ <strong>Geçici e-posta filtresi</strong> — mailinator, tempmail, yopmail gibi tek kullanımlık adresleri atla
+                <span class="badge" style="background:rgba(34,197,94,.15);color:#15803d">bounce önleyici</span>
+                <span style="font-size:11px;color:var(--muted);display:block;margin-top:2px">
+                    100+ bilinen geçici e-posta servisi otomatik engellenir. Liste bazlı, hızlı çalışır.
+                </span>
+            </span>
+            <label class="tgl"><input type="checkbox" id="b-filter-disposable" checked><span class="tgl-sl"></span></label>
+        </div>
+        <div class="toggle-row">
+            <span class="tgl-label">
+                🎣 <strong>Catch-all domain tespiti</strong> — her adresi kabul eden domain'leri tespit et
+                <span class="badge" style="background:rgba(239,68,68,.15);color:#991b1b">yavaş</span>
+                <span style="font-size:11px;color:var(--muted);display:block;margin-top:2px">
+                    Her domain için SMTP probe atar — büyük listede yavaşlatır. MX kontrolü aktifken çalışır. Küçük listeler için önerilir.
+                </span>
+            </span>
+            <label class="tgl"><input type="checkbox" id="b-filter-catchall"><span class="tgl-sl"></span></label>
+        </div>
+        <div class="toggle-row">
+            <span class="tgl-label">
+                🪤 <strong>Spam tuzağı filtresi</strong> — pristine, typo, recycled ve honeypot tuzaklarını atla
+                <span class="badge" style="background:rgba(239,68,68,.15);color:#991b1b">itibar koruyucu</span>
+                <span style="font-size:11px;color:var(--muted);display:block;margin-top:2px">
+                    Spam tuzağına e-posta göndermek IP/domain itibarını ciddi biçimde zedeler ve blacklist'e girilmesine neden olabilir.
+                    <br>
+                    <strong style="color:var(--warn)">Önerilen:</strong>
+                    Verify yapılmış tablolarda <code>is_valid=0</code> tuzaklar zaten suppression'a eklenmiştir —
+                    bu toggle doğrulanmamış listelerde ek güvence sağlar.
+                </span>
+            </span>
+            <label class="tgl"><input type="checkbox" id="b-filter-spamtrap" checked><span class="tgl-sl"></span></label>
+        </div>
+        <div class="toggle-row">
+            <span class="tgl-label">
+                ☣️ <strong>Toxic domain filtresi</strong> — abuse, bot kayıt ve blacklist'teki domainleri atla
+                <span class="badge" style="background:rgba(239,68,68,.15);color:#991b1b">itibar koruyucu</span>
+                <span style="font-size:11px;color:var(--muted);display:block;margin-top:2px">
+                    Yüksek şikayet oranına sahip, bot kayıtlarında yaygın kullanılan veya e-posta güvenlik
+                    şirketlerince riskli işaretlenmiş domainler engellenir. Spam tuzağından farklıdır:
+                    gerçek kullanıcı olabilir ancak açılma/şikayet oranı çok kötüdür.
+                </span>
+            </span>
+            <label class="tgl"><input type="checkbox" id="b-filter-toxicdomain" checked><span class="tgl-sl"></span></label>
+        </div>
+        <div class="toggle-row">
+            <span class="tgl-label">
+                🤖 <strong>Gibberish (bot üretim) adresi filtresi</strong> — otomatik oluşturulmuş rastgele adresleri atla
+                <span class="badge" style="background:rgba(234,179,8,.15);color:#92400e">bot koruması</span>
+                <span style="font-size:11px;color:var(--muted);display:block;margin-top:2px">
+                    <code>xkqrtbz@</code>, <code>qwzxcvb@</code> gibi 5+ ardışık sessiz harf içeren local kısımlar
+                    bot/otomatik kayıt sinyalidir. Verify ile tespit edilmiş adresler <code>is_valid=-1</code>
+                    olarak işaretlenir — bu toggle doğrulanmamış listelerde ek güvence sağlar.
+                </span>
+            </span>
+            <label class="tgl"><input type="checkbox" id="b-filter-gibberish"><span class="tgl-sl"></span></label>
+        </div>
+        <div class="toggle-row">
+            <span class="tgl-label">
+                🚩 <strong>Spam keyword filtresi</strong> — local kısmında spam kelimesi geçen adresleri atla
+                <span class="badge" style="background:rgba(234,179,8,.15);color:#92400e">kalite koruması</span>
+                <span style="font-size:11px;color:var(--muted);display:block;margin-top:2px">
+                    <code>lottery@</code>, <code>winner@</code>, <code>fake@</code>, <code>throwaway@</code> gibi
+                    sahte/bot kayıt adreslerini engeller. Gerçek kullanıcı olmayan adreslere gönderim
+                    açılma oranını düşürür ve şikayet riskini artırır.
+                </span>
+            </span>
+            <label class="tgl"><input type="checkbox" id="b-filter-spamlocal"><span class="tgl-sl"></span></label>
+        </div>
+        <div class="toggle-row" id="b-riskscore-row">
+            <span class="tgl-label" style="flex:1">
+                📊 <strong>Risk skoru eşiği</strong> — puan altındaki adresleri gönderimden atla
+                <span class="badge" style="background:rgba(234,179,8,.15);color:#92400e">verify gerekli</span>
+                <span style="font-size:11px;color:var(--muted);display:block;margin-top:4px">
+                    Sadece tabloda <code>risk_score</code> kolonu varsa çalışır (verify yapılmış listeler).
+                    0 = filtre kapalı · 50 = orta risk altı gönderilmez · 70 = sadece düşük/güvenli gönderilir.
+                </span>
+                <div style="display:flex;align-items:center;gap:12px;margin-top:8px">
+                    <input type="range" id="b-risk-threshold" min="0" max="90" step="10" value="0"
+                           style="flex:1;accent-color:var(--accent);padding:0;height:auto"
+                           oninput="updateRiskLabel(this.value)">
+                    <span id="b-risk-label" style="font-family:'Space Mono',monospace;font-size:12px;
+                          color:var(--accent);min-width:120px;text-align:right">Kapalı (0)</span>
+                </div>
+            </span>
+        </div>
+        <div class="toggle-row">
+            <span class="tgl-label">
+                🏗 <strong>SPF / DMARC zayıf domain filtresi</strong> — mail altyapısı yapılandırılmamış domainleri atla
+                <span class="badge" style="background:rgba(234,179,8,.15);color:#92400e">bounce riski</span>
+                <span style="font-size:11px;color:var(--muted);display:block;margin-top:2px">
+                    SPF veya DMARC kaydı olmayan domainlerin e-postası büyük olasılıkla spam klasörüne düşer
+                    ya da bounce eder. Verify sonrası <code>is_valid = -1 (no_infra)</code> olanları kapsar.
+                    <br>
+                    <strong style="color:var(--warn)">Not:</strong> Gmail, Yahoo gibi güvenilir sağlayıcılar
+                    bu filtreden muaftır — sadece kurumsal / bilinmeyen domainlere uygulanır.
+                </span>
+            </span>
+            <label class="tgl"><input type="checkbox" id="b-filter-noinfra"><span class="tgl-sl"></span></label>
         </div>
         <div class="field">
             <!-- Mesaj alanı — şablon seçici butonu ile -->
@@ -211,8 +441,11 @@
         <div class="field">
             <label>Gönderimler Arası Bekleme <span style="color:var(--muted);font-size:10px">(spam önleme)</span></label>
             <div style="display:flex;align-items:center;gap:12px">
-                <input type="range" id="b-delay" min="100" max="5000" step="100" value="500" style="flex:1;accent-color:var(--accent);padding:0;height:auto" oninput="document.getElementById('b-delay-val').textContent=this.value+'ms'">
+                <input type="range" id="b-delay" min="100" max="5000" step="100" value="500" style="flex:1;accent-color:var(--accent);padding:0;height:auto" oninput="updateDelayEstimate()">
                 <span style="font-family:'Space Mono',monospace;font-size:12px;color:var(--accent);min-width:60px;text-align:right" id="b-delay-val">500ms</span>
+            </div>
+            <div id="b-time-estimate" style="margin-top:6px;font-size:11px;color:var(--muted);display:none">
+                ⏱ <span id="b-estimate-txt"></span>
             </div>
         </div>
         <!-- Parçalı Gönderim -->
@@ -307,6 +540,7 @@
     <div class="card">
         <div class="card-title" style="display:flex;align-items:center;justify-content:space-between">
             <span id="b-prog-title">Gönderim Durumu</span>
+            <span id="b-prog-meta" style="font-size:11px;color:var(--muted);font-weight:400;margin-left:8px"></span>
             <div id="b-export-btns" style="display:none;display:none;gap:6px">
                 <button class="btn btn-outline btn-sm" onclick="exportBulkLog('csv')" title="CSV olarak indir">
                     📥 CSV İndir
@@ -386,14 +620,185 @@
 
 {% block scripts %}
 <script>
+{% raw %}
     window._hostingMode = false;
 
+    /* ══════════════════════════════════════════════════════════════════
+       KULLANICI TERCİHLERİ — Kullanıcı bazlı, DB'de kalıcı hafıza
+       Farklı cihaz/tarayıcıdan giriş yapılsa bile son seçimler korunur.
+       ══════════════════════════════════════════════════════════════════ */
+
+    // Kaydedilecek alan listesi: [id, tip]
+    // tip: 'val'=value, 'chk'=checkbox.checked, 'src'=kaynak seçimi
+    const PREF_FIELDS = [
+        ['b-sender',              'val'],
+        ['b-rule',                'val'],
+        ['b-subject',             'val'],
+        ['b-body',                'val'],
+        ['b-subject-b',           'val'],
+        ['b-html',                'chk'],
+        ['b-unsub',               'chk'],
+        ['b-ab-enable',           'chk'],
+        ['b-mx-check',            'chk'],
+        ['b-filter-role',         'chk'],
+        ['b-filter-disposable',   'chk'],
+        ['b-filter-catchall',     'chk'],
+        ['b-filter-spamtrap',     'chk'],
+        ['b-filter-toxicdomain',  'chk'],
+        ['b-filter-gibberish',    'chk'],
+        ['b-filter-spamlocal',    'chk'],
+        ['b-filter-noinfra',      'chk'],
+        ['b-only-valid',          'chk'],
+        ['b-risk-threshold',      'val'],
+        ['b-delay',               'val'],
+        ['b-batch-enabled',       'chk'],
+        ['b-batch-size',          'val'],
+        ['b-batch-wait-days',     'val'],
+        ['b-batch-wait-hours',    'val'],
+        ['b-batch-wait-mins',     'val'],
+        ['ec2-autostop',          'chk'],
+        ['_src',                  'src'],  // kaynak seçimi özel
+    ];
+
+    // Debounce — her tuşa basışta değil, 1.5sn sonra kaydeder
+    let _prefSaveTimer = null;
+    function savePrefs() {
+        clearTimeout(_prefSaveTimer);
+        _prefSaveTimer = setTimeout(_doSavePrefs, 1500);
+    }
+
+    async function _doSavePrefs() {
+        try {
+            const prefs = {};
+            for (const [id, tip] of PREF_FIELDS) {
+                if (tip === 'src') {
+                    const active = document.querySelector('.src-tab-active')?.dataset?.src
+                        || (document.getElementById('b-src-db')?.style.display !== 'none' ? 'db'
+                          : document.getElementById('b-src-paste')?.style.display !== 'none' ? 'paste'
+                          : 'excel');
+                    prefs[id] = active;
+                    continue;
+                }
+                const el = document.getElementById(id);
+                if (!el) continue;
+                prefs[id] = tip === 'chk' ? el.checked : el.value;
+            }
+            await fetch('/api/me/prefs', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(prefs)
+            });
+        } catch(e) { console.warn('Tercihler kaydedilemedi:', e); }
+    }
+
+    async function loadPrefs() {
+        try {
+            const resp = await fetch('/api/me/prefs');
+            const data = await resp.json();
+            if (!data.success || !data.prefs) return;
+            const prefs = data.prefs;
+
+            for (const [id, tip] of PREF_FIELDS) {
+                if (tip === 'src') {
+                    if (prefs[id]) switchListSource(prefs[id]);
+                    continue;
+                }
+                const el = document.getElementById(id);
+                if (!el || prefs[id] === undefined) continue;
+                if (tip === 'chk') {
+                    el.checked = prefs[id];
+                } else {
+                    el.value = prefs[id];
+                }
+            }
+
+            // Türetilmiş UI'ları güncelle
+            const delay = document.getElementById('b-delay');
+            if (delay) document.getElementById('b-delay-val').textContent = delay.value + 'ms';
+
+            const riskEl = document.getElementById('b-risk-threshold');
+            if (riskEl) {
+                const riskValEl = document.getElementById('b-risk-val');
+                if (riskValEl) riskValEl.textContent = riskEl.value > 0 ? riskEl.value : 'Kapalı';
+            }
+
+            // A/B test alanını aç/kapat
+            const abEl = document.getElementById('b-ab-enable');
+            if (abEl) toggleAbTest(abEl.checked);
+
+            // Batch ayarlarını aç/kapat
+            const batchEl = document.getElementById('b-batch-enabled');
+            if (batchEl) {
+                document.getElementById('b-batch-settings').style.display =
+                    batchEl.checked ? 'block' : 'none';
+                if (batchEl.checked) updateBatchPreview();
+            }
+
+            // Sender seçiliyse rule'u yeniden tetikle
+            const senderEl = document.getElementById('b-sender');
+            if (senderEl && senderEl.value) {
+                // Sender listesi async yükleniyor — seçimi kısa gecikmeyle uygula
+                const savedSender = senderEl.value; // loadSenderSelects sonrası set edilecek
+                window._pendingSender = prefs['b-sender'];
+            }
+            window._pendingRule = prefs['b-rule'];
+
+            updateDelayEstimate();
+
+        } catch(e) {}
+    }
+
+    // Sender listesi yüklenince pending seçimi uygula
+    function applyPendingSender() {
+        if (window._pendingSender) {
+            const el = document.getElementById('b-sender');
+            if (el) el.value = window._pendingSender;
+            window._pendingSender = null;
+        }
+        if (window._pendingRule) {
+            const el = document.getElementById('b-rule');
+            if (el) el.value = window._pendingRule;
+            window._pendingRule = null;
+            onRuleChange();
+        }
+    }
+
+    // Tüm değişiklik olaylarında tercihleri kaydet
+    function attachPrefListeners() {
+        const ids = PREF_FIELDS.map(f => f[0]).filter(id => id !== '_src');
+        for (const id of ids) {
+            const el = document.getElementById(id);
+            if (!el) continue;
+            const evs = el.type === 'checkbox' ? ['change']
+                      : el.tagName === 'SELECT'  ? ['change']
+                      : el.tagName === 'TEXTAREA' ? ['input']
+                      : ['input', 'change'];
+            for (const ev of evs) {
+                el.addEventListener(ev, savePrefs);
+            }
+        }
+    }
+
+
+
+    function _gonderimBildirimi(baslik, mesaj) {
+        if (!('Notification' in window)) return;
+        const gonder = () => new Notification(baslik, { body: mesaj, icon: '/static/favicon.ico' });
+        if (Notification.permission === 'granted') gonder();
+        else if (Notification.permission !== 'denied')
+            Notification.requestPermission().then(p => { if (p === 'granted') gonder(); });
+    }
+
     document.addEventListener('DOMContentLoaded', function() {
-        loadSenderSelects();
-        loadRules();
+        // Tercihler yüklendikten sonra sender/rule listelerini uygula
+        loadPrefs().then(() => {
+            loadSenderSelects().then ? loadSenderSelects().then(applyPendingSender) : (loadSenderSelects(), setTimeout(applyPendingSender, 800));
+            loadRules().then ? loadRules().then(() => { if(window._pendingRule){ const el=document.getElementById('b-rule'); if(el) el.value=window._pendingRule; window._pendingRule=null; onRuleChange(); }}) : loadRules();
+        });
         loadDbTables();
         switchListSource('db');
         document.getElementById('b-rule').addEventListener('change', onRuleChange);
+        attachPrefListeners();
 
         // Mod kontrolü — local mi hosting mi?
         fetch('/api/queue/mode').then(r=>r.json()).then(d=>{
@@ -482,7 +887,28 @@
         });
         calcBatchWaitMinutes();
         updateBatchPreview();
+        // Varsayılan şablonları yükle
+        loadDefaultTemplates();
     });
+
+    /* ── Varsayılan şablonları otomatik yükle ─────────────────── */
+    async function loadDefaultTemplates() {
+        try {
+            const d = await (await fetch('/api/templates/defaults')).json();
+            if (!d.success || !d.data) return;
+            const subjectEl = document.getElementById('b-subject');
+            const bodyEl    = document.getElementById('b-body');
+            // Sadece alan boşsa varsayılanı yükle — kullanıcının girişini ezme
+            if (d.data.subject && subjectEl && !subjectEl.value.trim()) {
+                subjectEl.value = d.data.subject.content;
+            }
+            if (d.data.body && bodyEl && !bodyEl.value.trim()) {
+                bodyEl.value = d.data.body.content;
+            }
+        } catch(e) {
+            // Sessizce geç — varsayılan şablon yoksa sorun değil
+        }
+    }
 
     // --- Parti geri sayım yönetimi ---
     let _batchCountdownTimer = null;
@@ -554,6 +980,28 @@
         };
     });
 
+    function updateRiskLabel(val) {
+        const n = parseInt(val);
+        const el = document.getElementById('b-risk-label');
+        if (!el) return;
+        if (n === 0) {
+            el.textContent = 'Kapalı (0)';
+            el.style.color = 'var(--muted)';
+        } else if (n <= 30) {
+            el.textContent = `Tehlikeli altı (${n})`;
+            el.style.color = '#dc2626';
+        } else if (n <= 50) {
+            el.textContent = `Yüksek risk altı (${n})`;
+            el.style.color = '#d97706';
+        } else if (n <= 70) {
+            el.textContent = `Orta risk altı (${n})`;
+            el.style.color = '#ca8a04';
+        } else {
+            el.textContent = `Sadece güvenli (${n}+)`;
+            el.style.color = '#16a34a';
+        }
+    }
+
     async function enqueueJob() {
         const isDb = listSource === 'db';
         const sid  = document.getElementById('b-sender').value;
@@ -583,6 +1031,15 @@
         fd.append('html_mode', document.getElementById('b-html').checked ? 'true' : 'false');
         fd.append('include_unsubscribe', document.getElementById('b-unsub').checked ? 'true' : 'false');
         fd.append('mx_check', document.getElementById('b-mx-check') && document.getElementById('b-mx-check').checked ? 'true' : 'false');
+        fd.append('filter_role', document.getElementById('b-filter-role') && document.getElementById('b-filter-role').checked ? 'true' : 'false');
+        fd.append('filter_disposable', document.getElementById('b-filter-disposable') && document.getElementById('b-filter-disposable').checked ? 'true' : 'false');
+        fd.append('filter_catchall', document.getElementById('b-filter-catchall') && document.getElementById('b-filter-catchall').checked ? 'true' : 'false');
+        fd.append('filter_spamtrap', document.getElementById('b-filter-spamtrap') && document.getElementById('b-filter-spamtrap').checked ? 'true' : 'false');
+        fd.append('filter_toxicdomain', document.getElementById('b-filter-toxicdomain') && document.getElementById('b-filter-toxicdomain').checked ? 'true' : 'false');
+        fd.append('filter_gibberish', document.getElementById('b-filter-gibberish') && document.getElementById('b-filter-gibberish').checked ? 'true' : 'false');
+        fd.append('filter_spamlocal', document.getElementById('b-filter-spamlocal') && document.getElementById('b-filter-spamlocal').checked ? 'true' : 'false');
+        fd.append('risk_threshold', document.getElementById('b-risk-threshold') ? document.getElementById('b-risk-threshold').value : '0');
+        fd.append('filter_noinfra', document.getElementById('b-filter-noinfra') && document.getElementById('b-filter-noinfra').checked ? 'true' : 'false');
         fd.append('only_valid', document.getElementById('b-only-valid') && document.getElementById('b-only-valid').checked ? 'true' : 'false');
         fd.append('delay_ms', document.getElementById('b-delay').value);
 
@@ -623,11 +1080,51 @@
     // ── Kuyruk İlerleme Takibi (polling) ─────────────────────────────
     let _queuePollTimer = null;
 
+    /* ── Tahmini Süre Hesaplama ──────────────────────────────────────── */
+    function getTotalCount() {
+        // Aktif kaynağa göre toplam adres sayısını döner
+        const src = document.querySelector('input[name="b-src"]:checked')?.value || 'excel';
+        if (src === 'db') {
+            return parseInt(document.getElementById('b-db-total')?.textContent || '0') || 0;
+        } else if (src === 'paste') {
+            const txt = (document.getElementById('b-paste-emails')?.value || '').trim();
+            if (!txt) return 0;
+            return txt.split('\n').map(l=>l.trim()).filter(l=>l && l.includes('@')).length;
+        } else {
+            return parseInt(document.getElementById('b-total')?.textContent || '0') || 0;
+        }
+    }
+
+    function formatDuration(seconds) {
+        if (seconds < 60) return `${seconds} saniye`;
+        if (seconds < 3600) {
+            const m = Math.floor(seconds / 60);
+            const s = seconds % 60;
+            return s > 0 ? `${m} dk ${s} sn` : `${m} dakika`;
+        }
+        const h = Math.floor(seconds / 3600);
+        const m = Math.floor((seconds % 3600) / 60);
+        return m > 0 ? `${h} sa ${m} dk` : `${h} saat`;
+    }
+
+    function updateDelayEstimate() {
+        const delayMs  = parseInt(document.getElementById('b-delay').value) || 500;
+        document.getElementById('b-delay-val').textContent = delayMs + 'ms';
+        const total    = getTotalCount();
+        const estEl    = document.getElementById('b-time-estimate');
+        const estTxt   = document.getElementById('b-estimate-txt');
+        if (!estEl || !estTxt) return;
+        if (total <= 0) { estEl.style.display = 'none'; return; }
+        const totalSec = Math.round((total * delayMs) / 1000);
+        estTxt.textContent = `${total.toLocaleString()} adres × ${delayMs}ms = yaklaşık ${formatDuration(totalSec)}`;
+        estEl.style.display = 'block';
+    }
+
     function startQueuePolling(qid) {
         document.getElementById('b-prog-wrap').style.display = 'block';
         document.getElementById('b-log').innerHTML = '';
         if (_queuePollTimer) clearInterval(_queuePollTimer);
-        _queuePollTimer = setInterval(() => pollQueueProgress(qid), 5000);
+        _queuePollTimer = setInterval(() => pollQueueProgress(qid), 2000);
         pollQueueProgress(qid);
     }
 
@@ -653,6 +1150,22 @@
             if (titleEl) {
                 const statusMap = {pending:'⏳ Bekliyor', running:'🔄 Gönderiliyor', paused:'⏸ Bekleniyor (sonraki parti)', done:'✅ Tamamlandı', cancelled:'⛔ İptal edildi'};
                 titleEl.textContent = `${statusMap[q.status]||q.status} — ${q.name}`;
+            }
+
+            // Meta: adres sayısı + kalan süre tahmini
+            const metaEl = document.getElementById('b-prog-meta');
+            if (metaEl && q.total_count > 0) {
+                const delayMs  = parseInt(document.getElementById('b-delay')?.value) || 500;
+                const done     = (q.current_offset || 0);
+                const remaining = Math.max(0, q.total_count - done);
+                const remSec   = Math.round((remaining * delayMs) / 1000);
+                if (q.status === 'running' && remaining > 0) {
+                    metaEl.textContent = `${q.total_count.toLocaleString()} adres · kalan ~${formatDuration(remSec)}`;
+                } else if (q.status === 'done') {
+                    metaEl.textContent = `${q.total_count.toLocaleString()} adres · tamamlandı`;
+                } else {
+                    metaEl.textContent = `${q.total_count.toLocaleString()} adres`;
+                }
             }
 
             // Geri sayım (paused ise)
@@ -694,6 +1207,11 @@
                 clearInterval(_queuePollTimer);
                 _queuePollTimer = null;
                 loadQueueList();
+                // Tarayıcı bildirimi
+                const bildirimMetin = q.status === 'done'
+                    ? `✅ ${(q.ok_count||0).toLocaleString('tr')} gönderildi · ❌ ${(q.err_count||0).toLocaleString('tr')} hata`
+                    : '⛔ Gönderim iptal edildi';
+                _gonderimBildirimi('MailSender Pro — Gönderim Tamamlandı', bildirimMetin);
             }
         } catch(e) { console.error('Queue poll error:', e); }
     }
@@ -903,5 +1421,61 @@
     document.addEventListener('keydown', function(e) {
         if (e.key === 'Escape') closeTplPicker();
     });
+
+    /* A/B Test toggle */
+    function toggleAbTest(enabled) {
+        document.getElementById('b-ab-wrap').style.display = enabled ? 'block' : 'none';
+        if (!enabled) document.getElementById('b-subject-b').value = '';
+    }
+    function onAbModeChange() {
+        const mode = document.querySelector('input[name="ab-mode"]:checked')?.value || 'split';
+        document.getElementById('ab-split-section').style.display   = mode === 'split'   ? '' : 'none';
+        document.getElementById('ab-history-section').style.display = mode === 'history' ? '' : 'none';
+    }
+
+    /* Template Önizleme — ilk Excel satırı verileriyle {{değişken}} doldurur */
+    function previewTemplate() {
+        const subjEl = document.getElementById('b-subject');
+        const bodyEl = document.getElementById('b-body');
+
+        if (!subjEl || !bodyEl) return;
+
+        // Aktif kaynağa göre önizleme tablosunu seç (Excel → b-prev-tbl, DB → b-db-prev-tbl)
+        const activeSrc = document.querySelector('.src-tab-active')?.dataset?.src || 'excel';
+        const prevTbl = activeSrc === 'db'
+            ? document.getElementById('b-db-prev-tbl')
+            : document.getElementById('b-prev-tbl');
+
+        // Önizleme tablosundan ilk satır verisini çek
+        let vars = {};
+        if (prevTbl) {
+            const headers = Array.from(prevTbl.querySelectorAll('thead th')).map(th => th.textContent.trim());
+            const firstRow = prevTbl.querySelector('tbody tr');
+            if (firstRow) {
+                const cells = Array.from(firstRow.querySelectorAll('td')).map(td => td.textContent.trim());
+                headers.forEach((h, i) => { vars[h] = cells[i] || ''; });
+            }
+        }
+
+        // Jinja2-benzeri {{değişken}} yerine koy (client-side basit render)
+        function render(tpl) {
+            return tpl.replace(/\{\{(\s*[\wÀ-ɏ]+\s*)\}\}/g, (_, key) => {
+                return vars[key.trim()] !== undefined ? vars[key.trim()] : `{{${key.trim()}}}`;
+            });
+        }
+
+        const modal = document.getElementById('tpl-preview-modal');
+        document.getElementById('tpl-preview-subject').textContent = render(subjEl.value);
+        const renderedBody = render(bodyEl.value);
+        const bodyPreview = document.getElementById('tpl-preview-body');
+        const isHtml = document.getElementById('b-html') && document.getElementById('b-html').checked;
+        if (isHtml) {
+            bodyPreview.innerHTML = renderedBody;
+        } else {
+            bodyPreview.textContent = renderedBody;
+        }
+        modal.style.display = 'flex';
+    }
+{% endraw %}
 </script>
 {% endblock %}

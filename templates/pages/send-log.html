@@ -18,6 +18,8 @@
 <!-- Log Tablosu -->
 <div class="card">
     <div class="log-filters">
+        <input type="date" id="lf-date-from" onchange="loadLog(1)" style="max-width:140px" title="Başlangıç tarihi">
+        <input type="date" id="lf-date-to"   onchange="loadLog(1)" style="max-width:140px" title="Bitiş tarihi">
         <select id="lf-sender" onchange="loadLog(1)" style="max-width:200px">
             <option value="">Tüm göndericiler</option>
         </select>
@@ -29,6 +31,8 @@
         </select>
         <input id="lf-search" placeholder="E-posta ara..." oninput="loadLog(1)" style="max-width:180px">
         <button class="btn btn-outline btn-sm" onclick="loadLog(1)">🔍 Filtrele</button>
+        <button class="btn btn-outline btn-sm" onclick="exportCsv()" style="margin-left:4px" title="Aktif filtreyle eşleşen tüm kayıtları indir">⬇ CSV İndir</button>
+        <button class="btn btn-outline btn-sm" onclick="retryFailed()" style="margin-left:4px" title="Başarısız gönderimler seçili sender ile tekrar denenir">🔄 Başarısızları Tekrar Dene</button>
         <button class="btn btn-danger btn-sm" onclick="clearLog()" style="margin-left:4px">🗑 Geçmişi Sil</button>
         <span style="margin-left:auto;font-size:11px;color:var(--muted)" id="log-count"></span>
     </div>
@@ -57,6 +61,13 @@
 {% block scripts %}
 <script>
 document.addEventListener('DOMContentLoaded', function() {
+    // Tarih filtresi default: dün → bugün
+    const _today = new Date();
+    const _yest  = new Date(_today);
+    _yest.setDate(_today.getDate() - 1);
+    document.getElementById('lf-date-from').value = _yest.toISOString().slice(0, 10);
+    document.getElementById('lf-date-to').value   = _today.toISOString().slice(0, 10);
+
     loadLogSummary();
     loadLog(1);
     loadSenderSelects();
@@ -153,37 +164,103 @@ function buildCard(s, st) {
     const sentMonth  = st.sent_month    || 0;
     const failMonth  = st.failed_month  || 0;
     const skipMonth  = st.skipped_month || 0;
-    const totalMonth = st.total_month   || 0;
+    const sentToday  = st.sent_today    || 0;
+    const failToday  = st.failed_today  || 0;
+    const totalToday = st.total_today   || 0;
     const sentAll    = st.sent_all      || 0;
     const lastSent   = st.last_sent_at  || '—';
+
+    // ── Günlük limit progress bar ─────────────────────────────────────
+    const dailyLimit  = parseInt(s.daily_limit) || 0;
+    let limitBarHtml  = '';
+    if (dailyLimit > 0) {
+        const usedPct   = Math.min(Math.round(sentToday / dailyLimit * 100), 100);
+        const remaining = Math.max(dailyLimit - sentToday, 0);
+        const barColor  = usedPct >= 90 ? '#f87171'   // kırmızı — kritik
+                        : usedPct >= 70 ? '#fb923c'   // turuncu — uyarı
+                        :                 'var(--ok)'; // yeşil — normal
+        const limitLabel = usedPct >= 100
+            ? '<span style="color:#f87171;font-weight:600">Limit doldu</span>'
+            : `<span style="color:${barColor}">${remaining.toLocaleString()} kaldı</span>`;
+        limitBarHtml = `
+        <div style="margin-top:10px">
+            <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--muted);margin-bottom:3px">
+                <span>Günlük limit</span>
+                <span>${sentToday.toLocaleString()} / ${dailyLimit.toLocaleString()} &nbsp;${limitLabel}</span>
+            </div>
+            <div style="height:5px;background:var(--border);border-radius:3px;overflow:hidden">
+                <div style="height:100%;width:${usedPct}%;background:${barColor};border-radius:3px;transition:width .4s"></div>
+            </div>
+        </div>`;
+    }
+
+    // ── Warmup bilgisi ────────────────────────────────────────────────
+    let warmupHtml = '';
+    if (s.warmup_enabled) {
+        let warmupDay = '—';
+        if (s.warmup_start_date) {
+            const start = new Date(s.warmup_start_date);
+            const today = new Date();
+            const diffMs = today - start;
+            warmupDay = Math.max(1, Math.floor(diffMs / 86400000) + 1);
+        }
+        warmupHtml = `
+        <div style="margin-top:8px;padding:5px 8px;background:rgba(251,146,60,.08);border-radius:6px;border:1px solid rgba(251,146,60,.2);font-size:10px;color:#fb923c;display:flex;align-items:center;gap:5px">
+            <span>🔥</span>
+            <span>Warmup aktif — <strong>${warmupDay}. gün</strong></span>
+        </div>`;
+    }
+
     return `
-    <div class="card" style="padding:16px;flex:0 0 240px;min-width:200px">
+    <div class="card" style="padding:16px;flex:0 0 270px;min-width:230px">
         <div style="margin-bottom:10px;min-width:0">
             <div style="font-weight:600;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${esc(s.name)}">${esc(s.name)}</div>
             <div style="font-size:10px;color:var(--muted);font-family:'Space Mono',monospace;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${esc(s.email)}">${esc(s.email)}</div>
         </div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:5px;margin-bottom:5px">
-            <div style="background:var(--s2);border-radius:7px;padding:7px 6px;text-align:center">
-                <div style="font-size:18px;font-weight:700;color:var(--accent)">${sentMonth.toLocaleString()}</div>
+
+        <!-- Bugün -->
+        <div style="font-size:9px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px">Bugün</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;margin-bottom:10px">
+            <div style="background:var(--s2);border-radius:7px;padding:6px 4px;text-align:center">
+                <div style="font-size:16px;font-weight:700;color:var(--accent)">${sentToday.toLocaleString()}</div>
                 <div style="font-size:9px;color:var(--muted);margin-top:1px">✓ Gönderildi</div>
             </div>
-            <div style="background:var(--s2);border-radius:7px;padding:7px 6px;text-align:center">
-                <div style="font-size:18px;font-weight:700;color:${failMonth>0?'#f87171':'var(--muted)'}">${failMonth.toLocaleString()}</div>
+            <div style="background:var(--s2);border-radius:7px;padding:6px 4px;text-align:center">
+                <div style="font-size:16px;font-weight:700;color:${failToday>0?'#f87171':'var(--muted)'}">${failToday.toLocaleString()}</div>
                 <div style="font-size:9px;color:var(--muted);margin-top:1px">✗ Hatalı</div>
             </div>
-        </div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:5px;margin-bottom:8px">
-            <div style="background:var(--s2);border-radius:7px;padding:7px 6px;text-align:center">
-                <div style="font-size:18px;font-weight:700;color:${skipMonth>0?'#fb923c':'var(--muted)'}">${skipMonth.toLocaleString()}</div>
-                <div style="font-size:9px;color:var(--muted);margin-top:1px">⏭ Atlandı</div>
-            </div>
-            <div style="background:var(--s2);border-radius:7px;padding:7px 6px;text-align:center">
-                <div style="font-size:18px;font-weight:700">${sentAll.toLocaleString()}</div>
+            <div style="background:var(--s2);border-radius:7px;padding:6px 4px;text-align:center">
+                <div style="font-size:16px;font-weight:700">${totalToday.toLocaleString()}</div>
                 <div style="font-size:9px;color:var(--muted);margin-top:1px">∑ Toplam</div>
             </div>
         </div>
-        <div style="font-size:10px;color:var(--muted);border-top:1px solid var(--border);padding-top:7px">
-            Bu ay: <strong>${totalMonth.toLocaleString()}</strong> · Son: <strong>${lastSent}</strong>
+
+        <!-- Bu Ay -->
+        <div style="font-size:9px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px">Bu Ay</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;margin-bottom:8px">
+            <div style="background:var(--s2);border-radius:7px;padding:6px 4px;text-align:center">
+                <div style="font-size:16px;font-weight:700;color:var(--accent)">${sentMonth.toLocaleString()}</div>
+                <div style="font-size:9px;color:var(--muted);margin-top:1px">✓ Gönderildi</div>
+            </div>
+            <div style="background:var(--s2);border-radius:7px;padding:6px 4px;text-align:center">
+                <div style="font-size:16px;font-weight:700;color:${failMonth>0?'#f87171':'var(--muted)'}">${failMonth.toLocaleString()}</div>
+                <div style="font-size:9px;color:var(--muted);margin-top:1px">✗ Hatalı</div>
+            </div>
+            <div style="background:var(--s2);border-radius:7px;padding:6px 4px;text-align:center">
+                <div style="font-size:16px;font-weight:700;color:${skipMonth>0?'#fb923c':'var(--muted)'}">${skipMonth.toLocaleString()}</div>
+                <div style="font-size:9px;color:var(--muted);margin-top:1px">⏭ Atlandı</div>
+            </div>
+        </div>
+
+        ${limitBarHtml}
+        ${warmupHtml}
+
+        <div style="font-size:10px;color:var(--muted);border-top:1px solid var(--border);padding-top:7px;margin-top:10px;display:flex;flex-direction:column;gap:4px">
+            <div style="display:flex;justify-content:space-between">
+                <span>Bu ay: <strong>${sentMonth.toLocaleString()}</strong></span>
+                <span>∑ <strong>${sentAll.toLocaleString()}</strong></span>
+            </div>
+            <div style="color:var(--muted)">Son: <strong>${lastSent}</strong></div>
         </div>
     </div>`;
 }
@@ -247,6 +324,74 @@ async function loadSenderStatsCards() {
 }
 
 /* ── Log Silme ───────────────────────────────────────────────────────── */
+function exportCsv() {
+    const sender = document.getElementById('lf-sender').value;
+    const status = document.getElementById('lf-status').value;
+    const search = document.getElementById('lf-search').value.trim();
+    const dateFrom = document.getElementById('lf-date-from')?.value;
+    const dateTo   = document.getElementById('lf-date-to')?.value;
+    const params = new URLSearchParams();
+    params.set('export', 'csv');
+    if (sender)   params.set('sender_id', sender);
+    if (status)   params.set('status', status);
+    if (search)   params.set('search', search);
+    if (dateFrom) params.set('date_from', dateFrom);
+    if (dateTo)   params.set('date_to', dateTo);
+    window.location.href = `/api/send-log?${params.toString()}`;
+}
+
+async function retryFailed() {
+    const senderEl  = document.getElementById('lf-sender');
+    const senderId  = senderEl ? senderEl.value : '';
+    if (!senderId) {
+        alert('Lütfen önce bir gönderici seçin (filtre alanından).');
+        return;
+    }
+    const senderName = senderEl.options[senderEl.selectedIndex].text;
+    if (!confirm(`"${senderName}" göndericisi ile başarısız mailler tekrar gönderilecek.\nDevam edilsin mi?`)) return;
+
+    const alertEl = document.getElementById('log-alert');
+    alertEl.textContent = '🔄 Başarısız mailler tekrar gönderiliyor...';
+    alertEl.className   = 'alert alert-ok';
+
+    try {
+        const resp = await fetch('/api/send-log/retry-failed', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({sender_id: senderId})
+        });
+        // SSE stream — oku ve özeti göster
+        const reader = resp.body.getReader();
+        const decoder = new TextDecoder();
+        let done = false, summary = null;
+        while (!done) {
+            const {value, done: d} = await reader.read();
+            done = d;
+            if (value) {
+                const lines = decoder.decode(value).split('\n');
+                for (const line of lines) {
+                    if (line.startsWith('data:')) {
+                        try {
+                            const ev = JSON.parse(line.slice(5));
+                            if (ev.type === 'done') summary = ev;
+                        } catch {}
+                    }
+                }
+            }
+        }
+        if (summary) {
+            alertEl.textContent = `✅ Tamamlandı: ${summary.ok} başarılı, ${summary.err} hatalı, ${summary.skipped} atlandı`;
+        } else {
+            alertEl.textContent = '✅ İşlem tamamlandı.';
+        }
+        loadLog(1);
+        setTimeout(() => { alertEl.className = 'alert'; }, 6000);
+    } catch(e) {
+        alertEl.textContent = `❌ Bağlantı hatası: ${e.message}`;
+        alertEl.className   = 'alert alert-err';
+    }
+}
+
 async function clearLog() {
     const senderEl   = document.getElementById('lf-sender');
     const senderId   = senderEl ? senderEl.value : '';

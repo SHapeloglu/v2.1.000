@@ -1,20 +1,48 @@
 {% extends "pages/settings/base.html" %}
 {% set active_tab = 'rules' %}
 {% block title %}Gönderim Kuralları{% endblock %}
-{% block subtitle %}Aynı alıcıya tekrar göndermek için minimum bekleme süreleri{% endblock %}
+{% block subtitle %}Kullanıcı veya gönderici bazlı tekrar gönderim kısıtlamaları{% endblock %}
 
 {% block settings_content %}
+
+<!-- Kural Formu -->
 <div class="card">
     <div class="card-title" id="rule-form-title">Yeni Kural Ekle</div>
+
     <div class="fg">
-        <div class="g2">
-            <div class="field"><label>Kural Adı</label><input id="r-name" placeholder="Haftalık Bülten Kuralı"></div>
-            <div class="field"><label>Gönderici</label><select id="r-sender"><option value="">— Seç —</option></select></div>
-        </div>
+
         <div class="field">
-            <label>Aynı Adrese Tekrar Gönderim İçin Min. Bekleme (Saat)</label>
+            <label for="r-name">Kural Adı</label>
+            <input id="r-name" placeholder="Aylık Bülten Kuralı">
+        </div>
+
+        <div class="field">
+            <label>Kural Tipi</label>
+            <div style="display:flex;gap:8px;margin-top:4px">
+                <button id="btn-type-user"   class="btn btn-primary" onclick="setRuleType('user')"   style="flex:1">👤 Kullanıcı Bazlı</button>
+                <button id="btn-type-sender" class="btn btn-outline" onclick="setRuleType('sender')" style="flex:1">📤 Gönderici Bazlı</button>
+            </div>
+            <div style="font-size:11px;color:var(--muted);margin-top:6px" id="r-type-hint">
+                Bu kural, seçilen <strong>kullanıcı</strong> gönderim yaptığında uygulanır — hangi göndericiyi kullandığından bağımsız.
+            </div>
+        </div>
+
+        <div class="field" id="r-user-wrap">
+            <label for="r-user">Kullanıcı</label>
+            <select id="r-user"><option value="">— Kullanıcı Seç —</option></select>
+        </div>
+
+        <div class="field" id="r-sender-wrap" style="display:none">
+            <label for="r-sender">Gönderici</label>
+            <select id="r-sender"><option value="">— Gönderici Seç —</option></select>
+        </div>
+
+        <div class="field">
+            <label for="r-interval">Aynı Adrese Tekrar Gönderim İçin Min. Bekleme (Saat)</label>
             <div style="display:flex;gap:12px;align-items:flex-start">
-                <div style="flex:0 0 120px"><input type="number" id="r-interval" placeholder="0" value="0" min="0"></div>
+                <div style="flex:0 0 120px">
+                    <input type="number" id="r-interval" placeholder="0" value="0" min="0">
+                </div>
                 <div class="pills">
                     <button class="pill" onclick="setRInterval(0,this)">Sınırsız</button>
                     <button class="pill" onclick="setRInterval(24,this)">1 Gün</button>
@@ -22,124 +50,243 @@
                     <button class="pill" onclick="setRInterval(720,this)">1 Ay</button>
                 </div>
             </div>
-            <div class="ib" style="margin-top:8px">⏱ Aynı alıcıya <strong id="ip-val">sınırsız sıklıkta</strong> gönderilebilir.</div>
+            <div class="ib" style="margin-top:8px">
+                ⏱ Aynı alıcıya <strong id="ip-val">sınırsız sıklıkta</strong> gönderilebilir.
+            </div>
         </div>
+
     </div>
+
     <div class="btn-row" style="margin-top:14px">
-        <button class="btn btn-primary" onclick="saveRulePage()"><div class="sp" id="r-sp"></div><span id="r-btn-txt">💾 Kaydet</span></button>
+        <button class="btn btn-primary" onclick="saveRulePage()">
+            <div class="sp" id="r-sp"></div>
+            <span id="r-btn-txt">💾 Kaydet</span>
+        </button>
         <button class="btn btn-outline" onclick="cancelRuleEditPage()" id="r-cancel-btn" style="display:none">İptal</button>
     </div>
     <div class="alert" id="r-alert"></div>
 </div>
 
+<!-- Mevcut Kurallar -->
 <div class="card">
     <div class="card-title">Mevcut Kurallar</div>
     <div class="tbl-wrap">
         <table>
-            <thead><tr><th>Ad</th><th>Gönderici</th><th>Min. Aralık</th><th>Durum</th><th>İşlem</th></tr></thead>
-            <tbody id="rules-tbody"><tr><td colspan="5" style="text-align:center;color:var(--muted);padding:20px">Yükleniyor...</td></tr></tbody>
+            <thead>
+                <tr>
+                    <th>Ad</th>
+                    <th>Tip</th>
+                    <th>Hedef</th>
+                    <th>Min. Aralık</th>
+                    <th>Durum</th>
+                    <th>İşlem</th>
+                </tr>
+            </thead>
+            <tbody id="rules-tbody">
+                <tr><td colspan="6" style="text-align:center;color:var(--muted);padding:20px">Yükleniyor...</td></tr>
+            </tbody>
         </table>
     </div>
 </div>
 
 <script>
-let _editRuleId = null;
+let _editRuleId  = null;
+let _ruleType    = 'user';
+let _rulesCache  = [];
 
-document.addEventListener('DOMContentLoaded', () => {
-    loadRulesPage();
-    loadSendersForRules();
-    document.getElementById('r-interval').addEventListener('input', updateIPreview);
+function setRuleType(type) {
+    _ruleType = type;
+    document.getElementById('r-user-wrap').style.display   = (type === 'user')   ? 'block' : 'none';
+    document.getElementById('r-sender-wrap').style.display = (type === 'sender') ? 'block' : 'none';
+    document.getElementById('btn-type-user').className   = 'btn ' + (type === 'user'   ? 'btn-primary' : 'btn-outline');
+    document.getElementById('btn-type-sender').className = 'btn ' + (type === 'sender' ? 'btn-primary' : 'btn-outline');
+    document.getElementById('r-type-hint').innerHTML = type === 'user'
+        ? 'Bu kural, seçilen <strong>kullanıcı</strong> gönderim yaptığında uygulanır — hangi göndericiyi kullandığından bağımsız.'
+        : 'Bu kural, seçilen <strong>gönderici</strong> üzerinden yapılan tüm gönderimlerde uygulanır.';
+}
+
+function setRInterval(val, btn) {
+    document.getElementById('r-interval').value = val;
+    document.querySelectorAll('.pills .pill').forEach(b => b.classList.remove('active'));
+    if (btn) btn.classList.add('active');
     updateIPreview();
-});
+}
+
+function updateIPreview() {
+    const v  = parseInt(document.getElementById('r-interval').value) || 0;
+    const el = document.getElementById('ip-val');
+    if      (v === 0)   el.textContent = 'sınırsız sıklıkta';
+    else if (v < 24)    el.textContent = `en erken ${v} saatte bir`;
+    else if (v === 24)  el.textContent = 'en erken günde bir';
+    else if (v === 168) el.textContent = 'en erken haftada bir';
+    else if (v === 720) el.textContent = 'en erken ayda bir';
+    else                el.textContent = `en erken ${v} saatte bir`;
+}
+
+function ivLabel(h) {
+    if (h == 0)    return '<span class="chip chip-skip">∞ Sınırsız</span>';
+    if (h < 24)    return `<span class="chip chip-skip">⏱ ${h}s</span>`;
+    if (h === 24)  return '<span class="chip chip-skip">⏱ 1 Gün</span>';
+    if (h === 168) return '<span class="chip chip-skip">⏱ 1 Hafta</span>';
+    if (h === 720) return '<span class="chip chip-skip">⏱ 1 Ay</span>';
+    return `<span class="chip chip-skip">⏱ ${Math.round(h/24)} Gün</span>`;
+}
+
+async function loadUsersForRules() {
+    try {
+        const d = await (await fetch('/api/users')).json();
+        const sel = document.getElementById('r-user');
+        if (d.data) {
+            sel.innerHTML = '<option value="">— Kullanıcı Seç —</option>' +
+                d.data.map(u => `<option value="${u.id}">${esc(u.username)}${u.role === 'admin' ? ' 👑' : ''}</option>`).join('');
+        }
+    } catch(e) {}
+}
 
 async function loadSendersForRules() {
     try {
         const d = await (await fetch('/api/senders')).json();
         const sel = document.getElementById('r-sender');
         if (d.data) {
-            sel.innerHTML = '<option value="">— Seç —</option>' +
-                d.data.map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join('');
+            sel.innerHTML = '<option value="">— Gönderici Seç —</option>' +
+                d.data.map(s => `<option value="${s.id}">${esc(s.name)} &lt;${esc(s.email)}&gt;</option>`).join('');
         }
     } catch(e) {}
 }
 
 async function loadRulesPage() {
+    const tb = document.getElementById('rules-tbody');
     try {
         const d = await (await fetch('/api/rules')).json();
-        const tb = document.getElementById('rules-tbody');
         if (!d.data || !d.data.length) {
-            tb.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:20px">Henüz kural eklenmedi.</td></tr>';
+            tb.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:20px">Henüz kural eklenmedi.</td></tr>';
             return;
         }
+        _rulesCache = d.data;
         tb.innerHTML = d.data.map(r => {
-            const iv = r.min_interval_h == 0 ? 'Sınırsız' : (r.min_interval_h < 24 ? r.min_interval_h+'s' : Math.round(r.min_interval_h/24)+'g');
-            return `<tr>
-                <td><strong>${esc(r.name)}</strong></td>
-                <td style="font-size:11px">${esc(r.sender_name||'')} &lt;${esc(r.sender_email||'')}&gt;</td>
-                <td><span class="chip chip-skip">⏱ ${iv}</span></td>
-                <td><span class="chip ${r.is_active?'chip-on':'chip-off'}">${r.is_active?'Aktif':'Pasif'}</span></td>
-                <td><div style="display:flex;gap:6px">
-                    <button class="btn btn-outline btn-sm" onclick="editRulePage(${r.id},'${esc(r.name)}',${r.sender_id},${r.min_interval_h})">✏</button>
-                    <button class="btn btn-danger btn-sm" onclick="delRulePage(${r.id})">🗑</button>
-                </div></td>
+            const isUser  = !!r.user_id;
+            const tipChip = isUser
+                ? '<span class="chip chip-ok" style="font-size:11px">👤 Kullanıcı</span>'
+                : '<span class="chip chip-off" style="font-size:11px">📤 Gönderici</span>';
+            const hedef = isUser
+                ? esc(r.user_name || '—')
+                : `${esc(r.sender_name||'—')} <span style="color:var(--muted);font-size:11px">&lt;${esc(r.sender_email||'')}&gt;</span>`;
+            return `<tr style="border-bottom:1px solid var(--border)">
+                <td style="padding:9px 10px"><strong>${esc(r.name)}</strong></td>
+                <td style="padding:9px 10px">${tipChip}</td>
+                <td style="padding:9px 10px;font-size:12px">${hedef}</td>
+                <td style="padding:9px 10px">${ivLabel(r.min_interval_h)}</td>
+                <td style="padding:9px 10px"><span class="chip ${r.is_active ? 'chip-on' : 'chip-off'}">${r.is_active ? 'Aktif' : 'Pasif'}</span></td>
+                <td style="padding:9px 10px">
+                    <div style="display:flex;gap:6px">
+                        <button class="btn btn-outline btn-sm" onclick="editRulePage(${r.id})">✏</button>
+                        <button class="btn btn-danger btn-sm"  onclick="delRulePage(${r.id})">🗑</button>
+                    </div>
+                </td>
             </tr>`;
         }).join('');
-    } catch(e) { console.error(e); }
+    } catch(e) {
+        tb.innerHTML = '<tr><td colspan="6" style="color:var(--err);padding:20px">Yüklenemedi.</td></tr>';
+        console.error(e);
+    }
 }
 
-function editRulePage(id, name, sid, ih) {
-    _editRuleId = id;
-    document.getElementById('r-name').value = name;
-    document.getElementById('r-sender').value = sid;
-    document.getElementById('r-interval').value = ih;
+function editRulePage(id) {
+    const r = _rulesCache.find(x => x.id === id);
+    if (!r) return;
+    _editRuleId = r.id;
+    document.getElementById('r-name').value     = r.name;
+    document.getElementById('r-interval').value = r.min_interval_h;
     updateIPreview();
-    document.getElementById('rule-form-title').textContent = 'Kural Düzenle: ' + name;
-    document.getElementById('r-cancel-btn').style.display = 'inline-flex';
-    document.getElementById('r-btn-txt').textContent = '💾 Güncelle';
+    if (r.user_id) {
+        setRuleType('user');
+        document.getElementById('r-user').value = r.user_id;
+    } else {
+        setRuleType('sender');
+        document.getElementById('r-sender').value = r.sender_id || '';
+    }
+    document.getElementById('rule-form-title').textContent = `Kural Düzenle: ${r.name}`;
+    document.getElementById('r-cancel-btn').style.display  = 'inline-flex';
+    document.getElementById('r-btn-txt').textContent       = '💾 Güncelle';
     window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
 function cancelRuleEditPage() {
     _editRuleId = null;
-    document.getElementById('r-name').value = '';
+    document.getElementById('r-name').value     = '';
     document.getElementById('r-interval').value = '0';
-    document.getElementById('r-sender').value = '';
+    document.getElementById('r-user').value     = '';
+    document.getElementById('r-sender').value   = '';
+    setRuleType('user');
     updateIPreview();
     document.getElementById('rule-form-title').textContent = 'Yeni Kural Ekle';
-    document.getElementById('r-cancel-btn').style.display = 'none';
-    document.getElementById('r-btn-txt').textContent = '💾 Kaydet';
+    document.getElementById('r-cancel-btn').style.display  = 'none';
+    document.getElementById('r-btn-txt').textContent       = '💾 Kaydet';
+    hideAlert('r-alert');
 }
 
 async function saveRulePage() {
-    const sp = document.getElementById('r-sp'), btxt = document.getElementById('r-btn-txt');
-    sp.style.display = 'block'; btxt.textContent = 'Kaydediliyor...';
+    const sp   = document.getElementById('r-sp');
+    const btxt = document.getElementById('r-btn-txt');
+    sp.style.display = 'block';
+    btxt.textContent = 'Kaydediliyor...';
     hideAlert('r-alert');
-    const p = {
-        name: document.getElementById('r-name').value,
-        sender_id: document.getElementById('r-sender').value,
-        min_interval_h: parseInt(document.getElementById('r-interval').value)||0,
-        is_active: 1
-    };
-    if (!p.name || !p.sender_id) {
-        showAlert('r-alert', 'Ad ve gönderici zorunludur.', 'err');
-        sp.style.display = 'none'; btxt.textContent = '💾 Kaydet'; return;
+
+    const name     = document.getElementById('r-name').value.trim();
+    const interval = parseInt(document.getElementById('r-interval').value) || 0;
+    const userId   = _ruleType === 'user'   ? (document.getElementById('r-user').value   || null) : null;
+    const senderId = _ruleType === 'sender' ? (document.getElementById('r-sender').value || null) : null;
+
+    if (!name) {
+        showAlert('r-alert', 'Kural adı zorunludur.', 'err');
+        sp.style.display = 'none'; btxt.textContent = _editRuleId ? '💾 Güncelle' : '💾 Kaydet'; return;
     }
-    const url = _editRuleId ? `/api/rules/${_editRuleId}` : '/api/rules';
+    if (!userId && !senderId) {
+        showAlert('r-alert', 'Kullanıcı veya gönderici seçilmelidir.', 'err');
+        sp.style.display = 'none'; btxt.textContent = _editRuleId ? '💾 Güncelle' : '💾 Kaydet'; return;
+    }
+
+    const payload = {
+        name:           name,
+        user_id:        userId   ? parseInt(userId)   : null,
+        sender_id:      senderId ? parseInt(senderId) : null,
+        min_interval_h: interval,
+        is_active:      1
+    };
+
+    const url    = _editRuleId ? `/api/rules/${_editRuleId}` : '/api/rules';
     const method = _editRuleId ? 'PUT' : 'POST';
     try {
-        const d = await (await fetch(url, {method, headers:{'Content-Type':'application/json'}, body:JSON.stringify(p)})).json();
-        showAlert('r-alert', d.message, d.success?'ok':'err');
+        const d = await (await fetch(url, {
+            method,
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        })).json();
+        showAlert('r-alert', d.message, d.success ? 'ok' : 'err');
         if (d.success) { cancelRuleEditPage(); loadRulesPage(); }
-    } catch { showAlert('r-alert', 'İstek hatası.', 'err'); }
-    finally { sp.style.display='none'; btxt.textContent='💾 Kaydet'; }
+    } catch(e) {
+        showAlert('r-alert', 'İstek hatası.', 'err');
+    } finally {
+        sp.style.display = 'none';
+        btxt.textContent = _editRuleId ? '💾 Güncelle' : '💾 Kaydet';
+    }
 }
 
 async function delRulePage(id) {
     if (!confirm('Kuralı silmek istediğinizden emin misiniz?')) return;
-    const d = await (await fetch(`/api/rules/${id}`, {method:'DELETE'})).json();
-    if (d.success) loadRulesPage(); else alert(d.message);
+    const d = await (await fetch(`/api/rules/${id}`, { method: 'DELETE' })).json();
+    if (d.success) loadRulesPage();
+    else alert(d.message);
 }
+
+document.addEventListener('DOMContentLoaded', () => {
+    loadRulesPage();
+    loadUsersForRules();
+    loadSendersForRules();
+    document.getElementById('r-interval').addEventListener('input', updateIPreview);
+    updateIPreview();
+    setRuleType('user');
+});
 </script>
 
 {% endblock %}
-
