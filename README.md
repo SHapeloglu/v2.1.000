@@ -1,15 +1,16 @@
 <div align="center">
 
-# ✉️ MailSender Pro
+# ✉️ MailSenderVerifier
 
-**Kurumsal toplu e-posta gönderim platformu**
+**Self-hosted e-posta gönderim ve doğrulama platformu — KOBİ'ler için tasarlandı**
 
 Flask · MySQL · AWS SES · SMTP · REST API
 
-[![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?style=flat-square&logo=python&logoColor=white)](https://python.org)
+[![Python](https://img.shields.io/badge/Python-3.12%2B-3776AB?style=flat-square&logo=python&logoColor=white)](https://python.org)
 [![Flask](https://img.shields.io/badge/Flask-3.1.0-000000?style=flat-square&logo=flask&logoColor=white)](https://flask.palletsprojects.com)
 [![MySQL](https://img.shields.io/badge/MySQL-8.0%2B-4479A1?style=flat-square&logo=mysql&logoColor=white)](https://mysql.com)
 [![AWS SES](https://img.shields.io/badge/AWS-SES-FF9900?style=flat-square&logo=amazonaws&logoColor=white)](https://aws.amazon.com/ses)
+[![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?style=flat-square&logo=docker&logoColor=white)](https://docker.com)
 [![License](https://img.shields.io/badge/Lisans-MIT-green?style=flat-square)](LICENSE)
 [![Version](https://img.shields.io/badge/Versiyon-v2.2.0-blue?style=flat-square)](CHANGELOG.md)
 
@@ -20,7 +21,9 @@ Flask · MySQL · AWS SES · SMTP · REST API
 ## 📖 İçindekiler
 
 - [Nedir?](#-nedir)
+- [Rakip Karşılaştırması](#-rakip-karşılaştırması)
 - [Özellikler](#-özellikler)
+- [Risk Skoru Sistemi](#-risk-skoru-sistemi)
 - [Mimari](#-mimari)
 - [Kurulum](#-kurulum)
 - [Yapılandırma](#-yapılandırma)
@@ -36,9 +39,28 @@ Flask · MySQL · AWS SES · SMTP · REST API
 
 ## 🚀 Nedir?
 
-MailSender Pro, küçük ve orta ölçekli işletmeler için geliştirilmiş, **kendi sunucunuzda çalışan** (self-hosted) kurumsal toplu e-posta gönderim platformudur. Excel listelerinden, veritabanı tablolarından ya da tek tek yazarak mail gönderebilir; gerçek zamanlı ilerleme takibi, bounce/complaint otomasyonu ve gelişmiş liste yönetimi yapabilirsiniz.
+MailSenderVerifier, küçük ve orta ölçekli işletmeler için geliştirilmiş, **kendi sunucunuzda çalışan** (self-hosted) kurumsal toplu e-posta gönderim ve doğrulama platformudur.
 
-Dış bir SaaS servise bağımlı kalmadan kendi altyapınızda tam kontrol size aittir.
+Excel listelerinden, veritabanı tablolarından ya da tek tek yazarak mail gönderebilir; gerçek zamanlı ilerleme takibi, akıllı bounce yönetimi, deliverability risk skoru ve gelişmiş liste doğrulaması yapabilirsiniz.
+
+Dış bir SaaS servise bağımlı kalmadan kendi altyapınızda tam kontrol size aittir. **Türkçe arayüzü** ile yerel KOBİ ihtiyaçlarına odaklanmıştır.
+
+---
+
+## 🏆 Rakip Karşılaştırması
+
+| Özellik | MSV | Brevo | Mailtrap | Listmonk | Sendy |
+|---------|:---:|:-----:|:--------:|:--------:|:-----:|
+| Self-hosted | ✅ | ❌ | ❌ | ✅ | ✅ |
+| E-posta doğrulama | ✅ | ❌ | ✅ (ayrı ücret) | ❌ | ❌ |
+| Deliverability risk skoru | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Bounce sınıflandırma | ✅ (5 kategori) | ✅ yüzeysel | ✅ yüzeysel | ✅ | ✅ |
+| Greylisting retry | ✅ | ❌ | ❌ | ❌ | ❌ |
+| AWS SES entegrasyonu | ✅ | ❌ | ❌ | ✅ | ✅ |
+| HTTP API gönderici | ✅ | — | — | ❌ | ❌ |
+| Gönderici itibar skoru | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Türkçe arayüz | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Aylık ücret | ❌ | ✅ | ✅ | ❌ | ❌ |
 
 ---
 
@@ -53,20 +75,21 @@ Dış bir SaaS servise bağımlı kalmadan kendi altyapınızda tam kontrol size
 | **Parçalı (Batch) Gönderim** | X mail gönder, Y dakika bekle — saatlik kota yönetimi |
 | **Tahmini Gönderim Süresi** | Alıcı sayısı × bekleme süresi hesaplanarak tahmini süre anlık gösterilir |
 | **SSE Canlı İzleme** | Gönderim sırasında her satır sonucu ekranda anlık görünür |
-| **Tarih Aralığı Filtresi** | Gönderim geçmişinde başlangıç/bitiş tarihi seçimi; default dün–bugün, UTC timezone bilinçli |
+| **Tarih Aralığı Filtresi** | Gönderim geçmişinde başlangıç/bitiş tarihi seçimi; UTC timezone bilinçli |
 | **Kuyruk Sistemi** | Hosting ortamında worker.py + cron ile arka plan gönderimi |
 
 ### 📡 Gönderici Desteği
-- **SMTP** — Gmail, Yandex, şirket sunucusu, herhangi bir SMTP
+- **SMTP** — Gmail, Yandex, şirket sunucusu, herhangi bir SMTP (TLS/SSL, 465/587)
 - **AWS SES** — SDK ile doğrudan entegrasyon, kota takibi
 - **HTTP API** — Brevo, Mailrelay, SendGrid, Postmark ve uyumlu her servis
 
 ### 🔍 Liste Yönetimi & Doğrulama
-- **E-posta Doğrulama** — Format, MX kaydı, SMTP, catch-all, disposable, gibberish kontrolü
+- **E-posta Doğrulama** — Format, MX, SMTP, catch-all, disposable, gibberish kontrolü
+- **Deliverability Risk Skoru** — Her adrese 0-100 arası teslim edilebilirlik skoru
 - **Otomatik Yeniden Doğrulama** — Belirli aralıklarla listeleri otomatik yeniler
 - **Disposable Domain Güncelleme** — 50.000+ geçici domain listesi 6 saatte bir GitHub'dan güncellenir
 - **DNSBL / RBL Kontrolü** — IP'nizin kara listede olup olmadığını kontrol eder
-- **Suppression Listesi** — Bounce, complaint, unsubscribe, geçersiz — otomatik veya manuel engelleme
+- **Suppression Listesi** — Bounce, complaint, unsubscribe, geçersiz — otomatik veya manuel
 - **Domain Bloklama** — Tek komutla tüm domaini engelle
 - **Yazım Hatası Düzeltme** — `gmial.com → gmail.com` benzeri otomatik düzeltme
 
@@ -74,24 +97,67 @@ Dış bir SaaS servise bağımlı kalmadan kendi altyapınızda tam kontrol size
 | Özellik | Açıklama |
 |---|---|
 | **Bounce Scanner** | IMAP kutusuna bağlanarak MAILER-DAEMON maillerini otomatik tarar |
-| **Akıllı Sınıflandırma** | Kalıcı / Geçici / Gönderen Sorunu / Mail Döngüsü kategorileri |
+| **Akıllı Sınıflandırma** | Kalıcı / Geçici / Gönderen Sorunu / Mail Döngüsü / İç Domain |
 | **Açıklama Üretimi** | Diagnostic-Code'dan Türkçe açıklama + ikon etiket üretir |
 | **RFC 3463 Etiket** | Enhanced status code tablosundan otomatik ikinci sınıflandırma |
 | **Checkbox Seçim** | Sonuçları gözden geçirip seçerek suppression'a ekle |
 | **Toplu Uygula** | Seçilenleri suppression'a veya sadece bounce kaydına ekle |
 | **CSV Export** | Tarama sonuçlarını CSV olarak indir |
-| **CSV'den Ara** | Suppression listesinde CSV'deki adresleri toplu sorgula |
 
 ### ⚙️ Sistem
 - **Çoklu Kullanıcı** — Admin / Editor rolleri, bcrypt şifre hash
 - **Tema Sistemi** — 7 farklı tema, hesaba kayıtlı, FOUC olmadan yükleme
 - **Şablon Yönetimi** — Konu ve mesaj şablonları, Jinja2 değişken desteği
 - **Kural Sistemi** — Gönderici + min. bekleme süresi kuralları
-- **Greylisting Retry** — Geçici reddedilen mailleri otomatik yeniden dener
+- **Greylisting Retry** — Geçici reddedilen mailleri 6/12/24 saat sonra otomatik yeniden dener
 - **AWS SNS Webhook** — Bounce/complaint bildirimlerini otomatik yakalar
 - **EC2 Auto-Stop** — Gönderim bitince instance'ı otomatik kapatır
 - **Audit Log** — Kritik işlemler (kullanıcı, gönderici, gönderim) kayıt altına alınır
 - **Şifre Sıfırlama** — Token tabanlı güvenli akış
+
+---
+
+## 📊 Risk Skoru Sistemi
+
+Her e-posta adresine 0-100 arası deliverability skoru atanır. Bu skor gönderim kararlarını otomatik yönlendirir.
+
+### Skor Bantları
+
+| Skor | Etiket | Açıklama |
+|------|--------|----------|
+| 90–100 | `safe` | Güvenli gönder |
+| 70–89 | `low_risk` | Düşük risk |
+| 50–69 | `medium_risk` | Orta risk |
+| 30–49 | `high_risk` | Yüksek risk |
+| 0–29 | `do_not_send` | Gönderme |
+
+### Başlangıç Skorları
+
+```python
+'valid':          85   # SMTP onaylı
+'free_provider':  90   # Gmail, Hotmail
+'catch_all':      65   # Sunucu her adrese 250 veriyor
+'role_account':   60   # info@, admin@ vb.
+'unknown':        40   # SMTP yanıtsız
+'invalid':         0   # SMTP 550
+```
+
+### Skoru Etkileyen Faktörler
+
+**Artıranlar:**
+- Kurumsal güvenlik ESP'si (Proofpoint, Mimecast vb.): +10 ile +20
+- Trusted provider (Google, Microsoft): +bonus
+
+**Düşürenler:**
+- Catch-all sunucu: -15
+- SPF + DMARC her ikisi yoksa: -10 (role_account için -5)
+- Sadece SPF yoksa: -5 (role_account için -3)
+- Sadece DMARC yoksa: -3
+- Disposable domain: büyük kesinti
+- Daha önce bounce: kesinti
+- Suppression listesinde: skor 0
+
+> **Not:** Brevo/Mailtrap/Millionverifier/Trykitty karşılaştırmasında info@ adreslerinin %71-100'ünün delivered olduğu tespit edildi. `role_account` taban skoru 50→60 güncellendi, SPF/DMARC cezası role_account için yarıya indirildi. (2026-07-26)
 
 ---
 
@@ -105,22 +171,21 @@ Dış bir SaaS servise bağımlı kalmadan kendi altyapınızda tam kontrol size
 ┌──────────────────────────▼──────────────────────────────┐
 │              Nginx  (Reverse Proxy + SSL)                │
 └──────────────────────────┬──────────────────────────────┘
-                           │ 127.0.0.1:5002
+                           │ 127.0.0.1:8011
 ┌──────────────────────────▼──────────────────────────────┐
 │                  app.py  (Flask)                         │
 │  ┌───────────┐  ┌──────────────┐  ┌───────────────────┐ │
 │  │ Sayfa     │  │  REST API    │  │  Webhook          │ │
-│  │ Route'ları│  │  Endpoint'leri│  │  /webhook/brevo   │ │
-│  └───────────┘  └──────────────┘  │  /webhook/ses     │ │
-│                                    └───────────────────┘ │
+│  │ Route'ları│  │  Endpoint'leri│  │  /sns/ses-notif  │ │
+│  └───────────┘  └──────────────┘  └───────────────────┘ │
 └──────────┬──────────────┬───────────────────────────────┘
            │              │
   ┌────────▼─────┐  ┌─────▼──────────────┐
   │  database.py │  │  mailer.py          │
   │  (MySQL)     │  │  verifier.py        │
-  └────────┬─────┘  │  security.py        │
+  └────────┬─────┘  │  risk_score.py      │
+           │        │  security.py        │
            │        │  spam_trap.py       │
-           │        │  toxic_domain.py    │
            │        │  dnsbl_check.py     │
            │        │  reputation_score.py│
            │        └─────────────────────┘
@@ -132,49 +197,65 @@ Dış bir SaaS servise bağımlı kalmadan kendi altyapınızda tam kontrol size
   └────────────────────────────────────────────┘
 ```
 
-### Gönderim Modları
-
-```
-SEND_MODE=local    →  SSE stream (anlık, EC2/VPS)
-SEND_MODE=hosting  →  Kuyruk + worker.py cron (cPanel/Shared Hosting)
-```
-
 ---
 
 ## 📦 Kurulum
 
 ### Gereksinimler
-
-- Python **3.10+**
+- Python **3.12+**
 - MySQL **8.0+**
-- Linux (Ubuntu/Debian önerilir) ya da Windows/macOS (geliştirme)
+- Nginx
+- Docker (önerilen)
 
-### Hızlı Kurulum (Linux)
+### 🐳 Docker ile Kurulum (Önerilen)
 
 ```bash
-# 1. Repoyu klonla
-git clone https://github.com/kullanici-adi/mailsender-pro.git
-cd mailsender-pro
+# Repoyu klonla
+git clone https://github.com/kullanici/mailsenderverifier.git
+cd mailsenderverifier
 
-# 2. Tam otomatik kurulum (pip, .env, DB, admin, nginx, systemd)
+# Ortam değişkenlerini ayarla
+cp _env .env
+nano .env
+
+# Fernet key üret ve .env'e yapıştır
+python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+
+# Build ve başlat
+docker compose up -d --build
+
+# Logları izle
+docker compose logs -f
+```
+
+### 🐧 Linux Manuel Kurulum
+
+```bash
+# Tam otomatik kurulum (pip, .env, DB, admin, nginx, systemd)
 sudo python3 setup_linux.py
 
-# Sistem servisleri olmadan (geliştirme / cPanel)
+# Sistem servisleri olmadan (geliştirme)
 python3 setup_linux.py --skip-system
 ```
 
-### Manuel Kurulum
+#### Adım Adım Manuel
 
 ```bash
-# 1. Bağımlılıkları yükle
+# Sanal ortam
+python3 -m venv venv
+source venv/bin/activate
 pip install -r requirements.txt
 
-# 2. .env dosyasını oluştur
-cp _env .env
-# .env dosyasını düzenle (aşağıya bak)
+# Migration'ları sırayla çalıştır
+mysql -u root -p aws_mail_sender_pro_v3 < migrate_v2.1.002.sql
+mysql -u root -p aws_mail_sender_pro_v3 < migrate_api_columns.sql
+mysql -u root -p aws_mail_sender_pro_v3 < migrate_auto_reverify.sql
+mysql -u root -p aws_mail_sender_pro_v3 < migrate_greylist_retry.sql
+mysql -u root -p aws_mail_sender_pro_v3 < migrate_spam_trap.sql
+mysql -u root -p aws_mail_sender_pro_v3 < migrate_suppression_fix.sql
 
-# 3. Uygulamayı başlat
-python app.py
+# Gunicorn ile başlat
+gunicorn --bind 0.0.0.0:8011 --workers 2 --timeout 120 app:app
 ```
 
 ---
@@ -189,32 +270,33 @@ DB_HOST=localhost
 DB_PORT=3306
 DB_USER=mailsender_user
 DB_PASSWORD=GUCLU_SIFRE
-DB_NAME=mailsender_pro
+DB_NAME=aws_mail_sender_pro_v3
+DB_SSL=false
 
-# ── Flask Güvenlik ──────────────────────────────
+# ── Şifreleme (asla paylaşma, git'e koyma!) ─────
 # Üret: python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 SECRET_KEY=
 
 # ── Gönderim Modu ───────────────────────────────
-# local    → SSE ile anlık gönderim (EC2 / VPS)
+# local    → SSE ile anlık gönderim (VPS / EC2)
 # hosting  → Kuyruk sistemi (cPanel / Shared Hosting)
 SEND_MODE=local
+
+# ── Uygulama ────────────────────────────────────
+APP_BASE_URL=https://msv.sirketiniz.com
+FORCE_HTTPS=true
 
 # ── AWS (SES için opsiyonel) ────────────────────
 AWS_ACCESS_KEY_ID=
 AWS_SECRET_ACCESS_KEY=
 AWS_REGION=us-east-1
 
-# ── Unsubscribe Uygulaması (opsiyonel) ──────────
+# ── Unsubscribe (opsiyonel) ─────────────────────
 UNSUB_APP_URL=https://unsub.example.com
 UNSUB_API_KEY=
-
-# ── HTTPS (nginx arkasında çalışırken) ──────────
-APP_BASE_URL=https://yourdomain.com
-FORCE_HTTPS=true
 ```
 
-### Hosting Modu Cron Ayarı (cPanel)
+### Hosting Modu Cron (cPanel)
 
 ```cron
 */5 * * * * cd /home/USER/public_html/mailsender && python3 worker.py >> logs/worker.log 2>&1
@@ -224,9 +306,12 @@ FORCE_HTTPS=true
 
 ## 📤 Gönderim Modları
 
-### 1. SMTP
+```
+SEND_MODE=local    →  SSE stream (anlık, VPS/EC2)
+SEND_MODE=hosting  →  Kuyruk + worker.py cron (cPanel/Shared Hosting)
+```
 
-Ayarlar → SMTP sekmesinden gönderici ekleyin:
+### SMTP Ayarları
 
 | Alan | Açıklama |
 |---|---|
@@ -235,26 +320,17 @@ Ayarlar → SMTP sekmesinden gönderici ekleyin:
 | Kullanıcı | ornek@gmail.com |
 | Şifre | Uygulama şifresi (app password) |
 
-### 2. AWS SES
+### AWS SES
 
-Ayarlar → SES sekmesinden:
-- Access Key ve Secret Key girin
-- Region seçin
-- Konfigürasyon seti (opsiyonel) belirtin
-- Test gönderin
+Ayarlar → SES sekmesinden Access Key, Secret Key ve Region girin. Test gönderin.
 
-### 3. HTTP API (Brevo, Mailrelay, vb.)
+### HTTP API (Brevo, Mailrelay vb.)
 
-Ayarlar → API sekmesinden:
-- Servis seçin (Brevo / Mailrelay / Generic)
-- API anahtarı girin
-- From adresi ve adı belirtin
+Ayarlar → API sekmesinden servis seçin, API anahtarı ve From adresi girin.
 
 ---
 
 ## ✅ E-posta Doğrulama
-
-Gönderim öncesinde listeyi temizlemek için Ayarlar → E-posta Doğrulama bölümünü kullanın.
 
 ### Doğrulama Aşamaları
 
@@ -265,7 +341,7 @@ Gönderim öncesinde listeyi temizlemek için Ayarlar → E-posta Doğrulama bö
 4. MX kaydı           → Domain'de mail sunucusu var mı?
 5. Catch-all testi    → Sunucu her adrese 250 veriyor mu?
 6. SMTP doğrulama     → Posta kutusu gerçekten var mı?
-7. Gibberish analizi  → asdfjkl@gmail.com gibi anlamsız
+7. Gibberish analizi  → asdfjkl@gmail.com gibi anlamsız adresler
 8. Spam keyword       → noreply@, admin@, info@ vb. rol adresleri
 ```
 
@@ -280,8 +356,6 @@ Gönderim öncesinde listeyi temizlemek için Ayarlar → E-posta Doğrulama bö
 ---
 
 ## 📡 SNS Webhook — Bounce & Complaint
-
-AWS SES bounce ve complaint bildirimlerini otomatik yakalamak için:
 
 ### 1. AWS SNS Topic Oluşturun
 
@@ -316,11 +390,6 @@ Events: Bounce, Complaint, Delivery
 | Complaint | Suppression'a eklenir (`complaint`) |
 | Delivery | Loglanır |
 
-Mevcut endpoint URL'nizi görmek için:
-```
-GET /webhook/status  (giriş gerektirir)
-```
-
 ---
 
 ## 🔐 Güvenlik
@@ -340,24 +409,16 @@ GET /webhook/status  (giriş gerektirir)
 - [ ] `FORCE_HTTPS=true` `.env`'de ayarlı
 - [ ] `SECRET_KEY` güçlü ve `.env`'de tanımlı
 - [ ] MySQL için ayrı, sınırlı yetkili kullanıcı oluşturuldu
-- [ ] EC2 Security Group'ta 5002 portu dışarıya kapalı
+- [ ] 8011 portu dışarıya kapalı (sadece Nginx üzerinden)
 - [ ] `.env` dosyası `.gitignore`'a eklendi
-
-### SECRET_KEY Üretme
-
-```bash
-python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
-```
 
 ### MySQL Güvenli Kullanıcı
 
 ```sql
 CREATE USER 'mailsender_user'@'127.0.0.1' IDENTIFIED BY 'GUCLU_SIFRE';
-GRANT SELECT, INSERT, UPDATE, DELETE, CREATE ON mailsender_pro.* TO 'mailsender_user'@'127.0.0.1';
+GRANT SELECT, INSERT, UPDATE, DELETE, CREATE ON aws_mail_sender_pro_v3.* TO 'mailsender_user'@'127.0.0.1';
 FLUSH PRIVILEGES;
 ```
-
-### Nginx + Let's Encrypt
 
 Tam HTTPS yapılandırması için [GUVENLIK_KILAVUZU.md](GUVENLIK_KILAVUZU.md) dosyasına bakın.
 
@@ -365,7 +426,7 @@ Tam HTTPS yapılandırması için [GUVENLIK_KILAVUZU.md](GUVENLIK_KILAVUZU.md) d
 
 ## 🌐 API Referansı
 
-Tüm API endpoint'leri `/api/` prefix'i ile başlar ve JSON döner. Giriş gerektirir.
+Tüm endpoint'ler `/api/` prefix'i ile başlar, JSON döner ve giriş gerektirir.
 
 ### Gönderim
 
@@ -393,6 +454,7 @@ Tüm API endpoint'leri `/api/` prefix'i ile başlar ve JSON döner. Giriş gerek
 | `POST` | `/api/suppression` | Adres ekle |
 | `DELETE` | `/api/suppression/<id>` | Adres sil |
 | `POST` | `/api/suppression/purge` | Toplu temizle |
+| `POST` | `/api/suppression/batch-check` | CSV'den gelen adresleri sorgula |
 
 ### E-posta Doğrulama
 
@@ -408,15 +470,14 @@ Tüm API endpoint'leri `/api/` prefix'i ile başlar ve JSON döner. Giriş gerek
 | Method | Endpoint | Açıklama |
 |---|---|---|
 | `POST` | `/api/bounce-scanner/scan` | IMAP taraması başlat |
-| `POST` | `/api/bounce-scanner/manuel-ekle` | Seçilen kaydı bounce/suppression'a ekle |
-| `POST` | `/api/suppression/batch-check` | CSV'den gelen adresleri suppression'da sorgula |
+| `POST` | `/api/bounce-scanner/manuel-ekle` | Seçilen kaydı ekle |
 | `GET` | `/api/bounce-scanner/history` | Son tarama geçmişi |
 
 ### SES / SNS
 
 | Method | Endpoint | Açıklama |
 |---|---|---|
-| `POST` | `/sns/ses-notification` | SNS webhook (auth yok) |
+| `POST` | `/sns/ses-notification` | SNS webhook |
 | `GET` | `/api/ses/reputation` | Tüm göndericilerin itibarı |
 | `GET` | `/api/ses/reputation/<id>` | Tek gönderici itibarı |
 | `GET` | `/webhook/status` | Webhook URL'lerini göster |
@@ -426,106 +487,92 @@ Tüm API endpoint'leri `/api/` prefix'i ile başlar ve JSON döner. Giriş gerek
 ## 📁 Dosya Yapısı
 
 ```
-mailsender-pro/
+mailsenderverifier/
 │
 ├── ── Ana Uygulama ──────────────────────────────────────────────────────
-├── app.py                      # Flask uygulaması — tüm HTTP route ve API endpoint'leri
-├── database.py                 # MySQL bağlantı katmanı — tüm DB fonksiyonları, migration
-├── mailer.py                   # Gönderim motoru — SMTP / SES / HTTP API destekli
+├── app.py                      # Flask uygulaması — tüm HTTP route ve API endpoint'leri (4.473 satır)
+├── database.py                 # MySQL bağlantı katmanı — tüm DB fonksiyonları (3.765 satır)
+├── mailer.py                   # Gönderim motoru — SMTP / SES / HTTP API (1.017 satır)
 ├── worker.py                   # Cron ile çalışan kuyruk işleyici (hosting modu)
 ├── security.py                 # Rate limit, CSRF koruması, güvenli tanımlayıcı doğrulama
 │
 ├── ── Bounce & Doğrulama ────────────────────────────────────────────────
-├── bounce_scanner_engine.py    # IMAP bounce tarama ve sınıflandırma motoru
-│                               #   → 5 kategori, RFC 3463 tablosu, Türkçe açıklama üretimi
+├── bounce_scanner_engine.py    # IMAP bounce tarama ve sınıflandırma motoru (778 satır)
 ├── verifier.py                 # E-posta doğrulama motoru (format/MX/SMTP/catch-all)
-├── auto_reverify.py            # Otomatik yeniden doğrulama zamanlayıcı ve iş kuyruğu
+├── auto_reverify.py            # Otomatik yeniden doğrulama zamanlayıcı
 ├── greylist_retry.py           # Greylisting yeniden deneme motoru
 ├── disposable_updater.py       # 50.000+ geçici domain listesi — 6 saatlik otomatik güncelleme
-├── yahoo_aol_check.py          # Yahoo & AOL özel SMTP doğrulama (API tabanlı)
+├── yahoo_aol_check.py          # Yahoo & AOL özel SMTP doğrulama
 │
 ├── ── Analiz & Skor ─────────────────────────────────────────────────────
+├── risk_score.py               # E-posta deliverability risk skoru 0-100 (423 satır)
 ├── reputation_score.py         # Gönderici itibar skoru (SPF/DKIM/bounce/complaint/DNSBL)
-├── risk_score.py               # E-posta teslimat risk skoru (0–100)
-├── dnsbl_check.py              # DNSBL / RBL IP kara liste kontrolü (Spamhaus, Barracuda vb.)
+├── dnsbl_check.py              # DNSBL / RBL IP kara liste kontrolü
 ├── spam_trap.py                # Spam tuzağı domain ve adres kontrolü
-├── toxic_domain.py             # Zararlı / kötü şöhretli domain kontrolü
+├── toxic_domain.py             # Zararlı domain kontrolü
 │
 ├── ── İçerik & Yardım ───────────────────────────────────────────────────
-├── help_content.py             # Ayarlar > Yardım sayfasının tüm içeriği (GUIDE + HELP)
-├── version.py                  # Tek kaynaklı versiyon bilgisi (VERSION, VERSION_SHORT)
+├── help_content.py             # Yardım sayfası içerikleri (2.171 satır)
+├── version.py                  # Tek kaynaklı versiyon bilgisi
 │
 ├── ── Kurulum & Yönetim ─────────────────────────────────────────────────
-├── setup_linux.py              # Tam otomatik Linux kurulum scripti (pip/nginx/systemd)
-├── setup_all_env.py            # Temel kurulum: pip, .env oluşturma, DB, admin
-├── reset_password.py           # CLI şifre sıfırlama aracı (UI olmadan acil erişim)
-│
-├── ── Test Dosyaları ────────────────────────────────────────────────────
-├── test_auto_reverify.py       # auto_reverify modülü unit testleri
-├── test_greylist_retry.py      # greylist_retry modülü unit testleri
-├── test_spam_trap.py           # spam_trap modülü unit testleri
-├── test_did_you_mean.py        # Yazım düzeltme (did_you_mean) fonksiyon testleri
+├── setup_linux.py              # Tam otomatik Linux kurulum scripti
+├── setup_all_env.py            # Temel kurulum: pip, .env, DB, admin
+├── reset_password.py           # CLI şifre sıfırlama aracı
+├── Dockerfile                  # Docker imajı
+├── docker-compose.yml          # Docker Compose yapılandırması
 │
 ├── ── Database Migration ────────────────────────────────────────────────
-├── migrate_v2.1.002.sql        # v2.1.002 şema güncellemesi
-├── migrate_api_columns.sql     # API gönderici sütunları
-├── migrate_auto_reverify.sql   # Otomatik yeniden doğrulama tabloları
-├── migrate_greylist_retry.sql  # Greylisting retry tabloları
-├── migrate_send_log_index.sql  # Gönderim logu performans indeksleri
-├── migrate_spam_trap.sql       # Spam tuzağı tabloları
-├── migrate_suppression_fix.sql # Suppression listesi düzeltmeleri
+├── migrate_v2.1.002.sql
+├── migrate_api_columns.sql
+├── migrate_auto_reverify.sql
+├── migrate_greylist_retry.sql
+├── migrate_send_log_index.sql
+├── migrate_spam_trap.sql
+├── migrate_suppression_fix.sql
 │
-├── ── Şablonlar ─────────────────────────────────────────────────────────
+├── ── Şablonlar & Statik ────────────────────────────────────────────────
 ├── templates/
-│   ├── base.html               # Ana layout — sidebar, navbar, tema, session
-│   ├── login.html              # Giriş sayfası
-│   ├── forgot_password.html    # Şifre sıfırlama isteği formu
-│   ├── reset_password.html     # Yeni şifre belirleme formu
-│   ├── unsubscribe.html        # Abonelik iptali onay sayfası (auth gerektirmez)
+│   ├── base.html
+│   ├── login.html / forgot_password.html / reset_password.html
+│   ├── unsubscribe.html
 │   └── pages/
-│       ├── dashboard.html      # Ana ekran — günlük istatistik, gönderici durumu, uyarılar
-│       ├── bulk-send.html      # Toplu gönderim sayfası (Excel / DB / Yapıştır)
-│       ├── send-log.html       # Gönderim geçmişi, filtreler, retry
-│       ├── single-send.html    # Tek adrese anlık mail gönderme
+│       ├── dashboard.html / bulk-send.html / single-send.html / send-log.html
 │       └── settings/
-│           ├── base.html       # Ayarlar alt navigasyon layout'u
-│           ├── smtp.html       # SMTP gönderici yönetimi + DNSBL + itibar skoru
-│           ├── ses.html        # AWS SES gönderici yönetimi
-│           ├── api.html        # HTTP API gönderici yönetimi (Brevo, Mailrelay vb.)
-│           ├── rules.html      # Gönderim kuralları (kullanıcı/gönderici bazlı)
-│           ├── db.html         # Veritabanı bağlantı ayarları
-│           ├── subscription.html # Suppression listesi ve abonelik yönetimi
-│           ├── bounce-scanner.html # Bounce tarayıcı UI — checkbox seçim, toplu uygula
-│           ├── verify.html     # E-posta listesi doğrulama
-│           ├── templates.html  # Konu ve mesaj şablonları
-│           ├── theme.html      # Arayüz teması seçimi (7 tema)
-│           ├── users.html      # Kullanıcı yönetimi (admin only)
-│           ├── audit-log.html  # Aktivite/denetim kayıtları (admin only)
-│           └── help.html       # Tam kullanım kılavuzu
+│           ├── smtp.html / ses.html / api.html / rules.html / db.html
+│           ├── subscription.html / bounce-scanner.html / verify.html
+│           ├── templates.html / theme.html / users.html / audit-log.html / help.html
 │
-├── ── Statik Dosyalar ───────────────────────────────────────────────────
 ├── static/
-│   ├── css/style.css           # Tüm arayüz stilleri — 7 tema, CSS değişkenleri
-│   └── js/main.js              # Paylaşılan JS fonksiyonları (esc, showAlert, toggle vb.)
+│   ├── css/style.css           # 7 tema, CSS değişkenleri
+│   └── js/main.js              # Paylaşılan JS fonksiyonları
 │
-├── ── Yapılandırma ──────────────────────────────────────────────────────
-├── _env                        # .env şablon dosyası (kopyalayıp düzenleyin)
-├── requirements.txt            # Python bağımlılıkları (pip install -r)
-├── CHANGELOG.md                # Sürüm geçmişi
-├── GUVENLIK_KILAVUZU.md        # Güvenlik, HTTPS, rate limit kılavuzu
-└── EC2_AUTOSTOP_KURULUM.md     # AWS EC2 otomatik kapatma kurulum rehberi
+└── ── Yapılandırma ──────────────────────────────────────────────────────
+    ├── _env                    # .env şablon dosyası
+    ├── requirements.txt
+    ├── CHANGELOG.md
+    ├── GUVENLIK_KILAVUZU.md
+    └── EC2_AUTOSTOP_KURULUM.md
 ```
 
 ---
 
-## 🗃️ Veritabanı Migration
+## 🗃️ Veritabanı Tabloları
 
-Uygulama ilk çalıştığında eksik tabloları ve kolonları **otomatik oluşturur** (`auto_migrate`). Manuel migration gerekiyorsa:
-
-```bash
-# v2.0 → v2.1 örnek
-mysql -u root -p mailsender_pro < migrate_v2.1.002.sql
-```
+| Tablo | Amaç |
+|-------|------|
+| `users` | Kullanıcı hesapları (bcrypt, rol, tema) |
+| `senders` | SMTP / SES / API gönderici hesapları |
+| `send_log` | Gönderim geçmişi |
+| `suppression_list` | Gönderilmeyecek adresler |
+| `bounce_log` | Bounce kayıtları |
+| `email_templates` | Konu/mesaj şablonları |
+| `send_rules` | Gönderim kuralları |
+| `greylist_retry_queue` | Greylisting retry kuyruğu |
+| `auto_reverify_schedules` | Otomatik yeniden doğrulama zamanlamaları |
+| `spam_trap_domains` | Spam tuzağı domain listesi |
+| `audit_log` | Kullanıcı/admin işlem geçmişi |
+| `rate_limit_log` | IP bazlı istek sayacı |
 
 ---
 
@@ -534,47 +581,31 @@ mysql -u root -p mailsender_pro < migrate_v2.1.002.sql
 Detaylı sürüm geçmişi için [CHANGELOG.md](CHANGELOG.md) dosyasına bakın.
 
 ### v2.2.0 (2026-05-10)
-- **Bounce Scanner** motoru eklendi (`bounce_scanner_engine.py`)
-  - IMAP kutusundan MAILER-DAEMON maillerini otomatik tarar
-  - 5 kategori: Kalıcı / Geçici / Gönderen Sorunu / Mail Döngüsü / Internal Domain
-  - Diagnostic-Code'dan Türkçe açıklama + ikon etiket üretir (511 EML test, %99 kapsama)
-  - RFC 3463 enhanced status code tablosu — ikinci sınıflandırma sütunu (deneme)
-- **Bounce Scanner UI** tamamen yenilendi
-  - Checkbox seçim sistemi — sonuçları gözden geçirip seçerek uygulama
-  - Hızlı seçim: Kalıcıları Seç / Tümünü Seç / Temizle
-  - Alt bar: Seçilenleri Suppression'a Ekle / Sadece Bounce Kaydı
-  - Kategori filtresi, arama, CSV export
-- **Suppression → CSV'den Ara** özelliği eklendi (`/api/suppression/batch-check`)
-- **`base.html`** RecursionError düzeltildi (kendini extend eden döngü giderildi)
-- **`settings/audit-log`** `current_user.role` → `session.get('user_role')` düzeltmesi
-- **`help_content.py`** Bounce Scanner bölümü eklendi (kategori açıklamaları dahil)
+- **Bounce Scanner** motoru eklendi — 5 kategori, RFC 3463, Türkçe açıklama (511 EML test, %99 kapsama)
+- **Bounce Scanner UI** yenilendi — checkbox seçim, toplu uygula, kategori filtresi, CSV export
+- **Suppression → CSV'den Ara** özelliği eklendi
+- `base.html` RecursionError düzeltildi
 
 ### v2.1.2 (2026-04-22)
-- **send-log:** Tarih aralığı filtresi eklendi — default dün/bugün, UTC timezone bilinçli (`CONVERT_TZ`)
-- **send-log:** Tarih filtresi sayfalama ve CSV export'a da uygulandı
-- **bulk-send:** Gönderimler arası bekleme slider default `5000ms` → `500ms`
-- **bulk-send:** İlerleme polling aralığı `5000ms` → `2000ms`
-- **bulk-send:** Tahmini gönderim süresi hesaplama — alıcı sayısı × delay, slider hareketi ve liste yüklenince güncellenir
-- **bulk-send:** Gönderim Durumu başlığına canlı adres sayısı ve kalan süre tahmini eklendi
-- **worker.py:** Skip edilen adreslerde (`is_valid`, MX, disposable, spam trap vb.) gereksiz `time.sleep` kaldırıldı — delay yalnızca gerçek gönderim sonrası uygulanır
+- **send-log:** Tarih aralığı filtresi — UTC timezone bilinçli
+- **bulk-send:** Bekleme slider default 5000ms → 500ms
+- **bulk-send:** Tahmini gönderim süresi hesaplama eklendi
+- **worker.py:** Skip edilen adreslerde gereksiz sleep kaldırıldı
 
 ### v2.1.1 (2026-04-18)
-- AWS SNS webhook entegrasyonu — yeni endpoint: `POST /webhook/ses`
-- `disposable_updater.py` worker entegrasyonu — 6 saatlik throttle ile otomatik güncelleme
-- Flask port `5000` → `5002` düzeltmesi (nginx, setup_linux.py, güvenlik kılavuzu)
-- `sns_handler.py` yeniden yazıldı: `_db()` factory pattern, `ses_notification_save()` desteği
+- AWS SNS webhook entegrasyonu
+- `disposable_updater.py` worker entegrasyonu
+- Flask port 5000 → 8011
 
 ### v2.1.0 (2026-03-13)
-- Audit Log sistemi eklendi
-- Gönderim loguna kullanıcı bilgisi eklendi
-- Tema hesaba kaydediliyor (DB kalıcı)
+- Audit Log sistemi
+- Tema hesaba kayıtlı (DB kalıcı)
 - SNS Handler Blueprint entegrasyonu
-- Disposable domain otomatik güncelleme (worker entegrasyonu)
 
 ### v2.0.0 (2026-03-10)
 - Kullanıcı auth sistemi (admin / editor rolleri)
-- HTTP API gönderici modu (Brevo, Mailrelay, vb.)
-- Kuyruk sistemi (hosting modu / cPanel)
+- HTTP API gönderici modu
+- Kuyruk sistemi (hosting modu)
 - Unsubscribe sistemi (RFC 8058 one-click)
 - EC2 Auto-Stop
 
@@ -601,6 +632,6 @@ MIT License — detaylar için [LICENSE](LICENSE) dosyasına bakın.
 
 <div align="center">
 
-**MailSender Pro** · v2.2.0 · Self-hosted · Türkçe
+**MailSenderVerifier** · v2.2.0 · Self-hosted · Türkçe
 
 </div>
